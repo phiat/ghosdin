@@ -2,3 +2,24 @@
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Beads issue tracker
+.beads/
+
+# Agent instructions
+AGENTS.md
+
+# Ghostty source (cloned for reference, not vendored)
+ghostty/
+
+# Justfile (local dev, not committed)
+justfile
+
+# Build artifacts
+demo_bin
+termview_bin
+example_bin
+*.o
+*.a
+*.so
+*.dylib

@@ -1,5 +1,46 @@
 # Agent Instructions
 
+## Project Overview
+
+**ghosdin** — Odin bindings for libghostty-vt + raylib-based terminal tools.
+
+### Structure
+
+| Path | Purpose |
+|------|---------|
+| `vendor/ghostty_vt/ghostty_vt.odin` | Raw C FFI bindings (complete libghostty-vt API) |
+| `vendor/ghostty_vt/terminal.odin` | Idiomatic Odin wrapper (`Term`, iterators, typed getters) |
+| `console/` | Embeddable quake-style dropdown console for raylib games |
+| `termview/` | Standalone graphical terminal emulator (raylib + PTY) |
+| `demo/` | Headless demo (bindings smoke test, no GUI) |
+| `example/` | Example raylib game using the console |
+| `ghostty/` | Cloned ghostty source (gitignored, used to build libghostty-vt) |
+
+### Build System
+
+Use `just`. Key commands:
+- `just build` — build lib + all targets
+- `just check-all` — type-check every package
+- `just run-demo` / `just run-termview` / `just run-example`
+- `just dev` — build + run termview
+
+The lib is built with `zig build -Demit-lib-vt=true` inside `ghostty/`.
+Odin links against `ghostty/zig-out/lib/libghostty-vt.so`.
+
+### Coding Conventions
+
+- Raw bindings in `ghostty_vt.odin`: C-style, `link_prefix = "ghostty_"`, opaque handles as `distinct rawptr`
+- Wrapper in `terminal.odin`: Odin-style, `Term` struct, `term_*` procs, `Error` enum
+- Console package: self-contained, includes its own PTY copy
+- PTY code is Linux-only (`forkpty` from libutil, `O_NONBLOCK`)
+- All packages must pass `odin check` (use `-no-entry-point` for libraries)
+
+### Quality Gates
+
+Before completing work: `just check-all && just build`
+
+---
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference
