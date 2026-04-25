@@ -1,5 +1,11 @@
 # ghosdin
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Odin](https://img.shields.io/badge/odin-nightly-orange.svg)](https://odin-lang.org/)
+[![Zig](https://img.shields.io/badge/zig-0.15.2-f7a41d.svg)](https://ziglang.org/)
+[![raylib](https://img.shields.io/badge/raylib-5.5-white.svg)](https://www.raylib.com/)
+[![Platform](https://img.shields.io/badge/platform-linux-lightgrey.svg)](#)
+
 Odin bindings for [libghostty-vt](https://github.com/ghostty-org/ghostty) — the
 zero-dependency VT terminal parser/state library from the Ghostty project.
 
