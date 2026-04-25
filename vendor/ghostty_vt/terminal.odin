@@ -415,6 +415,14 @@ term_render_cursor :: proc(t: ^Term) -> Cursor_Info {
 	return info
 }
 
+// Public accessors over the internal render handles. These let consumers that
+// want the lower-level row/cell APIs (e.g., to read per-row dirty flags or
+// custom cell metadata) reuse the Term's allocations without poking at the
+// `_`-prefixed fields directly.
+term_render_state    :: #force_inline proc "contextless" (t: ^Term) -> Render_State                  { return t._render }
+term_row_iterator    :: #force_inline proc "contextless" (t: ^Term) -> Render_State_Row_Iterator     { return t._row_iter }
+term_row_cells_handle :: #force_inline proc "contextless" (t: ^Term) -> Render_State_Row_Cells       { return t._row_cells }
+
 // Reset render dirty state.
 term_render_clean :: proc(t: ^Term) {
 	if !t._has_render do return
