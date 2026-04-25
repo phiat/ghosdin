@@ -14,6 +14,7 @@ ghosdin/
 │   ├── ghostty_vt.odin    Raw C FFI bindings (complete API)
 │   └── terminal.odin      Idiomatic Odin wrapper (Term, iterators, helpers)
 ├── pty/                   Shared POSIX PTY interface (forkpty, non-blocking I/O)
+├── render_rl/             Shared raylib helpers (cell render, font, key encoding)
 ├── console/               Embeddable quake-style dropdown console
 ├── termview/              Standalone graphical terminal (raylib + PTY)
 ├── demo/                  Headless demo (bindings smoke test)
@@ -28,7 +29,8 @@ ghosdin/
 ### Prerequisites
 
 - [Odin](https://odin-lang.org/) (nightly)
-- [Zig](https://ziglang.org/) (0.15+) — to build libghostty-vt
+- [Zig](https://ziglang.org/) 0.15.2 — to build libghostty-vt
+  (pinned in `.mise.toml`; upstream ghostty does not yet support 0.16)
 - [just](https://github.com/casey/just) — task runner
 
 ### Setup
@@ -156,6 +158,12 @@ A working terminal emulator in ~300 lines of Odin:
 ```
 just run-termview
 ```
+
+#### Screenshots
+
+- `F12` — save the full window as `termview_<timestamp>.png` in the working directory.
+- Click and drag — capture a cell-aligned region as `termview-region_<timestamp>.png`,
+  and copy the underlying text into the system clipboard at the same time.
 
 ### example — Game + Console Demo
 

@@ -3,7 +3,9 @@ package ghostty_vt
 // Idiomatic Odin wrapper layer over the raw libghostty-vt C bindings.
 // Provides Odin-style iterators, union types, error handling, and RAII.
 
+import "base:runtime"
 import "core:c"
+import "core:mem"
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -30,24 +32,102 @@ to_error :: proc(r: Result) -> Error {
 // Term — high-level terminal handle
 // ---------------------------------------------------------------------------
 
-Term :: struct {
-	handle:       Terminal,
-	_render:      Render_State,
-	_row_iter:    Render_State_Row_Iterator,
-	_row_cells:   Render_State_Row_Cells,
-	_has_render:  bool,
+// Heap-pinned bridge from a libghostty-vt `Allocator` into an Odin
+// `mem.Allocator`. Pointed at by C; must outlive the Term.
+@(private)
+Term_Allocator :: struct {
+	odin:   mem.Allocator,
+	vtable: Allocator_Vtable,
+	handle: Allocator,
 }
 
-// Create a new terminal. Returns error on failure.
-term_init :: proc(cols: u16, rows: u16, max_scrollback: uint = 10000) -> (Term, Error) {
+Term :: struct {
+	handle:      Terminal,
+	_render:     Render_State,
+	_row_iter:   Render_State_Row_Iterator,
+	_row_cells:  Render_State_Row_Cells,
+	_has_render: bool,
+	_alloc:      ^Term_Allocator,
+}
+
+// libghostty-vt follows the Zig allocator convention: `alignment` is the
+// log2 of the actual byte alignment (0 → 1, 3 → 8, etc.).
+@(private)
+_align_bytes :: #force_inline proc "contextless" (log2_align: u8) -> int {
+	return 1 << uint(log2_align)
+}
+
+@(private)
+_bridge_alloc :: proc "c" (ctx: rawptr, n: c.size_t, alignment: u8, _: c.uintptr_t) -> rawptr {
+	context = runtime.default_context()
+	b := cast(^Term_Allocator)ctx
+	context.allocator = b.odin
+	if n == 0 do return nil
+	p, err := mem.alloc(int(n), _align_bytes(alignment))
+	if err != .None do return nil
+	return p
+}
+
+@(private)
+_bridge_resize :: proc "c" (ctx: rawptr, ptr: rawptr, old_len: c.size_t, alignment: u8, new_len: c.size_t, _: c.uintptr_t) -> bool {
+	context = runtime.default_context()
+	b := cast(^Term_Allocator)ctx
+	context.allocator = b.odin
+	if new_len == 0 do return true
+	p, err := mem.resize(ptr, int(old_len), int(new_len), _align_bytes(alignment))
+	return err == .None && p == ptr
+}
+
+@(private)
+_bridge_remap :: proc "c" (ctx: rawptr, ptr: rawptr, old_len: c.size_t, alignment: u8, new_len: c.size_t, _: c.uintptr_t) -> rawptr {
+	context = runtime.default_context()
+	b := cast(^Term_Allocator)ctx
+	context.allocator = b.odin
+	if new_len == 0 do return nil
+	p, err := mem.resize(ptr, int(old_len), int(new_len), _align_bytes(alignment))
+	if err != .None do return nil
+	return p
+}
+
+@(private)
+_bridge_free :: proc "c" (ctx: rawptr, ptr: rawptr, n: c.size_t, _: u8, _: c.uintptr_t) {
+	context = runtime.default_context()
+	b := cast(^Term_Allocator)ctx
+	context.allocator = b.odin
+	if ptr == nil do return
+	mem.free_with_size(ptr, int(n))
+}
+
+@(private)
+_make_term_allocator :: proc(odin_alloc: mem.Allocator) -> ^Term_Allocator {
+	b := new(Term_Allocator, odin_alloc)
+	b.odin   = odin_alloc
+	b.vtable = Allocator_Vtable{
+		alloc  = _bridge_alloc,
+		resize = _bridge_resize,
+		remap  = _bridge_remap,
+		free   = _bridge_free,
+	}
+	b.handle = Allocator{ctx = b, vtable = &b.vtable}
+	return b
+}
+
+// Create a new terminal. Allocations performed by libghostty-vt for this
+// terminal (and its render state) are routed through `allocator`, so
+// tracking allocators see them.
+term_init :: proc(cols: u16, rows: u16, max_scrollback: uint = 10000, allocator := context.allocator) -> (Term, Error) {
 	t: Term
+	t._alloc = _make_term_allocator(allocator)
 	opts := Terminal_Options{
 		cols           = cols,
 		rows           = rows,
 		max_scrollback = c.size_t(max_scrollback),
 	}
-	res := terminal_new(nil, &t.handle, opts)
-	if res != .SUCCESS do return {}, to_error(res)
+	res := terminal_new(&t._alloc.handle, &t.handle, opts)
+	if res != .SUCCESS {
+		mem.free(t._alloc, allocator)
+		return {}, to_error(res)
+	}
 	return t, .None
 }
 
@@ -60,6 +140,10 @@ term_destroy :: proc(t: ^Term) {
 	}
 	terminal_free(t.handle)
 	t.handle = nil
+	if t._alloc != nil {
+		mem.free(t._alloc, t._alloc.odin)
+		t._alloc = nil
+	}
 }
 
 // Feed raw VT data into the terminal.
@@ -274,16 +358,17 @@ Row_Cell :: struct {
 term_ensure_render :: proc(t: ^Term) -> Error {
 	if t._has_render do return .None
 
-	res := render_state_new(nil, &t._render)
+	a := t._alloc != nil ? &t._alloc.handle : nil
+	res := render_state_new(a, &t._render)
 	if res != .SUCCESS do return to_error(res)
 
-	res = render_state_row_iterator_new(nil, &t._row_iter)
+	res = render_state_row_iterator_new(a, &t._row_iter)
 	if res != .SUCCESS {
 		render_state_free(t._render)
 		return to_error(res)
 	}
 
-	res = render_state_row_cells_new(nil, &t._row_cells)
+	res = render_state_row_cells_new(a, &t._row_cells)
 	if res != .SUCCESS {
 		render_state_row_iterator_free(t._row_iter)
 		render_state_free(t._render)
@@ -424,11 +509,13 @@ render_cell_next :: proc(it: ^Render_Cell_Iterator) -> (cell: Render_Cell, ok: b
 // Formatter helpers
 // ---------------------------------------------------------------------------
 
-// Format terminal contents as plain text.
-term_format_plain :: proc(t: ^Term, trim: bool = true) -> ([]u8, Error) {
+// Run libghostty-vt's formatter and copy the result into the caller's allocator.
+// The C-side buffer is freed before returning, so the caller owns a normal
+// Odin slice releasable with `delete`.
+term_format :: proc(t: ^Term, emit: Formatter_Format, trim: bool, allocator := context.allocator) -> ([]u8, Error) {
 	opts := Formatter_Terminal_Options{
 		size = size_of(Formatter_Terminal_Options),
-		emit = .PLAIN,
+		emit = emit,
 		trim = trim,
 	}
 	fmtr: Formatter
@@ -440,33 +527,24 @@ term_format_plain :: proc(t: ^Term, trim: bool = true) -> ([]u8, Error) {
 	out_len: c.size_t
 	res = formatter_format_alloc(fmtr, nil, &out_ptr, &out_len)
 	if res != .SUCCESS do return nil, to_error(res)
+	defer free(nil, out_ptr, out_len)
 
-	return out_ptr[:out_len], .None
+	if out_len == 0 do return nil, .None
+
+	owned, err := mem.make_aligned([]u8, int(out_len), 1, allocator)
+	if err != .None do return nil, .Out_Of_Memory
+	mem.copy(raw_data(owned), out_ptr, int(out_len))
+	return owned, .None
 }
 
-// Format terminal contents as HTML.
-term_format_html :: proc(t: ^Term) -> ([]u8, Error) {
-	opts := Formatter_Terminal_Options{
-		size = size_of(Formatter_Terminal_Options),
-		emit = .HTML,
-		trim = true,
-	}
-	fmtr: Formatter
-	res := formatter_terminal_new(nil, &fmtr, t.handle, opts)
-	if res != .SUCCESS do return nil, to_error(res)
-	defer formatter_free(fmtr)
-
-	out_ptr: [^]u8
-	out_len: c.size_t
-	res = formatter_format_alloc(fmtr, nil, &out_ptr, &out_len)
-	if res != .SUCCESS do return nil, to_error(res)
-
-	return out_ptr[:out_len], .None
+// Format terminal contents as plain text. Returns a slice owned by `allocator`
+// (defaults to the context allocator); release with `delete`.
+term_format_plain :: proc(t: ^Term, trim: bool = true, allocator := context.allocator) -> ([]u8, Error) {
+	return term_format(t, .PLAIN, trim, allocator)
 }
 
-// Free a buffer returned by term_format_*.
-term_format_free :: proc(buf: []u8) {
-	if len(buf) > 0 {
-		free(nil, raw_data(buf), c.size_t(len(buf)))
-	}
+// Format terminal contents as HTML. Returns a slice owned by `allocator`
+// (defaults to the context allocator); release with `delete`.
+term_format_html :: proc(t: ^Term, allocator := context.allocator) -> ([]u8, Error) {
+	return term_format(t, .HTML, true, allocator)
 }

@@ -5,98 +5,84 @@ package termview
 // Spawns a PTY with your shell, feeds output through libghostty-vt for
 // VT parsing, and renders the terminal grid using raylib.
 
+import p "../pty"
+import r "../render_rl"
+import gvt "../vendor/ghostty_vt"
 import "base:runtime"
 import "core:c"
 import "core:fmt"
+import "core:strings"
+import "core:time"
 import rl "vendor:raylib"
-import gvt "../vendor/ghostty_vt"
-import p "../pty"
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
-TERM_COLS      :: 100
-TERM_ROWS      :: 35
-CELL_W         :: 9
-CELL_H         :: 18
-FONT_SIZE      :: 16
+TERM_COLS :: 100
+TERM_ROWS :: 35
+CELL_W :: 9
+CELL_H :: 18
+FONT_SIZE :: 16
 MAX_SCROLLBACK :: 5000
-PADDING        :: 4
+PADDING :: 4
 
 WINDOW_W :: TERM_COLS * CELL_W + PADDING * 2
 WINDOW_H :: TERM_ROWS * CELL_H + PADDING * 2
 
-// ---------------------------------------------------------------------------
-// Palette (Ghostty default-ish dark theme)
-// ---------------------------------------------------------------------------
-
-BG_COLOR :: rl.Color{0x1d, 0x1f, 0x21, 0xff}
-FG_COLOR :: rl.Color{0xc5, 0xc8, 0xc6, 0xff}
 CURSOR_COLOR :: rl.Color{0xc5, 0xc8, 0xc6, 0xcc}
+SELECTION_COLOR :: rl.Color{0x88, 0xcc, 0xff, 0x55}
+SELECTION_BORDER :: rl.Color{0x88, 0xcc, 0xff, 0xff}
 
 // ---------------------------------------------------------------------------
 // State (package-level so callbacks can access)
 // ---------------------------------------------------------------------------
 
-term:         gvt.Terminal
-render_state: gvt.Render_State
-row_iter:     gvt.Render_State_Row_Iterator
-row_cells:    gvt.Render_State_Row_Cells
-pty:          p.Pty
-font:         rl.Font
-read_buf:     [65536]u8
+term: gvt.Term
+pty: p.Pty
+font: rl.Font
+owns_font: bool
+read_buf: [65536]u8
+session_ended: bool
 
-// Package-level callback storage (avoids dangling stack pointer)
-write_pty_fn: gvt.Terminal_Write_Pty_Fn
+// Mouse-drag screenshot state.
+selecting:    bool
+sel_anchor:   rl.Vector2
+sel_current:  rl.Vector2
+flash_until:  f64    // timestamp until which a brief overlay confirms a capture
+flash_msg:    string
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
 main :: proc() {
-	// -- Init ghostty-vt terminal --
-	opts := gvt.Terminal_Options{
-		cols           = TERM_COLS,
-		rows           = TERM_ROWS,
-		max_scrollback = MAX_SCROLLBACK,
-	}
-	if gvt.terminal_new(nil, &term, opts) != .SUCCESS {
-		fmt.eprintln("Failed to create terminal")
+	t, err := gvt.term_init(TERM_COLS, TERM_ROWS, MAX_SCROLLBACK)
+	if err != .None {
+		fmt.eprintln("Failed to create terminal:", err)
 		return
 	}
-	defer gvt.terminal_free(term)
+	term = t
+	defer gvt.term_destroy(&term)
 
-	// Install write_pty callback (stored at package level)
-	write_pty_cb :: proc "c" (terminal: gvt.Terminal, userdata: rawptr, data: [^]u8, len: c.size_t) {
+	write_pty_cb :: proc "c" (
+		_terminal: gvt.Terminal,
+		userdata: rawptr,
+		data: [^]u8,
+		length: c.size_t,
+	) {
 		context = #force_no_inline runtime.default_context()
 		pt := cast(^p.Pty)userdata
-		p.write_bytes(pt, data[:len])
+		p.write_bytes(pt, data[:length])
 	}
-	write_pty_fn = gvt.Terminal_Write_Pty_Fn(write_pty_cb)
-	gvt.terminal_set(term, .WRITE_PTY, rawptr(&write_pty_fn))
-	gvt.terminal_set(term, .USERDATA, rawptr(&pty))
+	gvt.term_set(&term, .WRITE_PTY, rawptr(write_pty_cb))
+	gvt.term_set(&term, .USERDATA, rawptr(&pty))
 
-	// -- Init render state --
-	if gvt.render_state_new(nil, &render_state) != .SUCCESS {
-		fmt.eprintln("Failed to create render state")
+	if e := gvt.term_ensure_render(&term); e != .None {
+		fmt.eprintln("Failed to allocate render state:", e)
 		return
 	}
-	defer gvt.render_state_free(render_state)
 
-	if gvt.render_state_row_iterator_new(nil, &row_iter) != .SUCCESS {
-		fmt.eprintln("Failed to create row iterator")
-		return
-	}
-	defer gvt.render_state_row_iterator_free(row_iter)
-
-	if gvt.render_state_row_cells_new(nil, &row_cells) != .SUCCESS {
-		fmt.eprintln("Failed to create row cells")
-		return
-	}
-	defer gvt.render_state_row_cells_free(row_cells)
-
-	// -- Spawn PTY --
 	shell := p.get_default_shell()
 	ok: bool
 	pty, ok = p.spawn(shell, TERM_COLS, TERM_ROWS)
@@ -105,29 +91,20 @@ main :: proc() {
 		return
 	}
 	defer p.destroy(&pty)
-
 	p.resize(&pty, TERM_COLS, TERM_ROWS)
 
-	// -- Init raylib --
 	rl.SetConfigFlags({.VSYNC_HINT})
 	rl.InitWindow(WINDOW_W, WINDOW_H, "ghosdin — termview")
 	defer rl.CloseWindow()
 	rl.SetTargetFPS(60)
 
-	// Load a monospace font
-	font = rl.LoadFontEx("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", FONT_SIZE, nil, 0)
-	if font.texture.id == 0 {
-		font = rl.LoadFontEx("/usr/share/fonts/TTF/DejaVuSansMono.ttf", FONT_SIZE, nil, 0)
-	}
-	if font.texture.id == 0 {
-		font = rl.GetFontDefault()
-	}
-	defer rl.UnloadFont(font)
+	font, owns_font = r.load_mono_font(FONT_SIZE)
+	defer if owns_font do rl.UnloadFont(font)
 
-	// -- Main loop --
 	for !rl.WindowShouldClose() {
 		pump_pty()
 		handle_input()
+		handle_screenshot_input()
 		draw_frame()
 	}
 }
@@ -137,15 +114,12 @@ main :: proc() {
 // ---------------------------------------------------------------------------
 
 pump_pty :: proc() {
-	total := 0
-	for total < len(read_buf) {
-		n := p.read_bytes(&pty, read_buf[total:])
-		if n <= 0 do break
-		total += n
+	if session_ended do return
+	data, eof := p.drain(&pty, read_buf[:])
+	if len(data) > 0 {
+		gvt.term_write_bytes(&term, data)
 	}
-	if total > 0 {
-		gvt.terminal_vt_write(term, raw_data(read_buf[:total]), c.size_t(total))
-	}
+	if eof do session_ended = true
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +131,7 @@ handle_input :: proc() {
 		ch := rl.GetCharPressed()
 		if ch == 0 do break
 		buf: [4]u8
-		n := encode_utf8(buf[:], ch)
+		n := r.encode_utf8(buf[:], ch)
 		p.write_bytes(&pty, buf[:n])
 	}
 
@@ -165,48 +139,125 @@ handle_input :: proc() {
 		key := rl.GetKeyPressed()
 		if key == .KEY_NULL do break
 
+		// F12 is reserved for full-window screenshot (see handle_screenshot_input).
+		if key == .F12 do continue
+
 		ctrl := rl.IsKeyDown(.LEFT_CONTROL) || rl.IsKeyDown(.RIGHT_CONTROL)
 
-		seq: string
-		#partial switch key {
-		case .ENTER:     seq = "\r"
-		case .BACKSPACE: seq = "\x7f"
-		case .TAB:       seq = "\t"
-		case .ESCAPE:    seq = "\x1b"
-		case .UP:        seq = "\x1b[A"
-		case .DOWN:      seq = "\x1b[B"
-		case .RIGHT:     seq = "\x1b[C"
-		case .LEFT:      seq = "\x1b[D"
-		case .HOME:      seq = "\x1b[H"
-		case .END:       seq = "\x1b[F"
-		case .PAGE_UP:   seq = "\x1b[5~"
-		case .PAGE_DOWN: seq = "\x1b[6~"
-		case .INSERT:    seq = "\x1b[2~"
-		case .DELETE:    seq = "\x1b[3~"
-		case .F1:        seq = "\x1bOP"
-		case .F2:        seq = "\x1bOQ"
-		case .F3:        seq = "\x1bOR"
-		case .F4:        seq = "\x1bOS"
-		case .F5:        seq = "\x1b[15~"
-		case .F6:        seq = "\x1b[17~"
-		case .F7:        seq = "\x1b[18~"
-		case .F8:        seq = "\x1b[19~"
-		case .F9:        seq = "\x1b[20~"
-		case .F10:       seq = "\x1b[21~"
-		case .F11:       seq = "\x1b[23~"
-		case .F12:       seq = "\x1b[24~"
-		case:
-			if ctrl {
-				ki := int(key)
-				if ki >= int(rl.KeyboardKey.A) && ki <= int(rl.KeyboardKey.Z) {
-					ctrl_byte := u8(ki - int(rl.KeyboardKey.A) + 1)
-					p.write_byte(&pty, ctrl_byte)
-				}
-			}
+		if seq := r.key_to_vt_sequence(key); seq != "" {
+			p.write_string(&pty, seq)
 			continue
 		}
-		p.write_string(&pty, seq)
+		if ctrl {
+			if b, ok := r.ctrl_byte(key); ok {
+				p.write_byte(&pty, b)
+			}
+		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot — F12 for full window, drag-select for a cell-aligned region.
+// Region capture also pushes the selected text into the system clipboard.
+// ---------------------------------------------------------------------------
+
+handle_screenshot_input :: proc() {
+	if rl.IsKeyPressed(.F12) {
+		path := timestamped_path("termview", "png")
+		defer delete(path)
+		cpath := strings.clone_to_cstring(path)
+		defer delete(cpath)
+		rl.TakeScreenshot(cpath)
+		set_flash(fmt.tprintf("saved %s", path))
+	}
+
+	if rl.IsMouseButtonPressed(.LEFT) {
+		selecting = true
+		sel_anchor = rl.GetMousePosition()
+		sel_current = sel_anchor
+	}
+	if selecting {
+		sel_current = rl.GetMousePosition()
+		if rl.IsMouseButtonReleased(.LEFT) {
+			selecting = false
+			capture_selection(sel_anchor, sel_current)
+		}
+	}
+}
+
+// Snap pixel coords to a cell-aligned (col, row) range covering the gesture.
+selection_to_cells :: proc(a, b: rl.Vector2) -> (col0, row0, col1, row1: int, valid: bool) {
+	min_x := min(a.x, b.x) - PADDING
+	max_x := max(a.x, b.x) - PADDING
+	min_y := min(a.y, b.y) - PADDING
+	max_y := max(a.y, b.y) - PADDING
+	col0 = max(0, int(min_x / CELL_W))
+	row0 = max(0, int(min_y / CELL_H))
+	col1 = min(TERM_COLS - 1, int(max_x / CELL_W))
+	row1 = min(TERM_ROWS - 1, int(max_y / CELL_H))
+	if col1 < col0 || row1 < row0 do return 0, 0, 0, 0, false
+	if (col1 - col0) < 1 && (row1 - row0) < 1 do return 0, 0, 0, 0, false
+	return col0, row0, col1, row1, true
+}
+
+capture_selection :: proc(a, b: rl.Vector2) {
+	col0, row0, col1, row1, ok := selection_to_cells(a, b)
+	if !ok do return
+
+	// Pixel rect — inclusive of the right/bottom cells.
+	x := f32(col0) * CELL_W + PADDING
+	y := f32(row0) * CELL_H + PADDING
+	w := f32(col1 - col0 + 1) * CELL_W
+	h := f32(row1 - row0 + 1) * CELL_H
+	rect := rl.Rectangle{x = x, y = y, width = w, height = h}
+
+	full := rl.LoadImageFromScreen()
+	defer rl.UnloadImage(full)
+	cropped := rl.ImageFromImage(full, rect)
+	defer rl.UnloadImage(cropped)
+
+	path := timestamped_path("termview-region", "png")
+	defer delete(path)
+	cpath := strings.clone_to_cstring(path)
+	defer delete(cpath)
+	rl.ExportImage(cropped, cpath)
+
+	text := selection_text(col0, row0, col1, row1)
+	defer delete(text)
+	ctext := strings.clone_to_cstring(text)
+	defer delete(ctext)
+	rl.SetClipboardText(ctext)
+	set_flash(fmt.tprintf("saved %s + clipboard (%dx%d cells)", path, col1 - col0 + 1, row1 - row0 + 1))
+}
+
+// Build a UTF-8 string from the cells in the given inclusive rectangle.
+selection_text :: proc(col0, row0, col1, row1: int) -> string {
+	b := strings.builder_make()
+	for y := row0; y <= row1; y += 1 {
+		for x := col0; x <= col1; x += 1 {
+			info, e := gvt.term_cell_at(&term, u16(x), u16(y))
+			if e != .None do continue
+			if info.has_text && info.codepoint >= 32 {
+				strings.write_rune(&b, info.codepoint)
+			} else {
+				strings.write_byte(&b, ' ')
+			}
+		}
+		strings.write_byte(&b, '\n')
+	}
+	return strings.to_string(b)
+}
+
+timestamped_path :: proc(prefix, ext: string) -> string {
+	now := time.now()
+	y, m, d := time.date(now)
+	hh, mm, ss := time.clock(now)
+	return fmt.aprintf("%s_%04d%02d%02d_%02d%02d%02d.%s", prefix, y, int(m), d, hh, mm, ss, ext)
+}
+
+set_flash :: proc(msg: string) {
+	flash_msg = msg
+	flash_until = rl.GetTime() + 2.5
 }
 
 // ---------------------------------------------------------------------------
@@ -214,126 +265,56 @@ handle_input :: proc() {
 // ---------------------------------------------------------------------------
 
 draw_frame :: proc() {
-	gvt.render_state_update(render_state, term)
-
-	colors := gvt.Render_State_Colors{size = size_of(gvt.Render_State_Colors)}
-	gvt.render_state_colors_get(render_state, &colors)
-
-	cursor_visible: bool
-	cursor_x, cursor_y: u16
-	cursor_in_viewport: bool
-	gvt.render_state_get(render_state, .CURSOR_VISIBLE, &cursor_visible)
-	gvt.render_state_get(render_state, .CURSOR_VIEWPORT_HAS_VALUE, &cursor_in_viewport)
-	gvt.render_state_get(render_state, .CURSOR_VIEWPORT_X, &cursor_x)
-	gvt.render_state_get(render_state, .CURSOR_VIEWPORT_Y, &cursor_y)
+	gvt.term_render_update(&term)
+	colors, _ := gvt.term_render_colors(&term)
+	cursor := gvt.term_render_cursor(&term)
 
 	rl.BeginDrawing()
 	defer rl.EndDrawing()
 
-	rl.ClearBackground(to_rl_color(colors.background))
+	rl.ClearBackground(r.to_rl_color(colors.background))
 
-	gvt.render_state_get(render_state, .ROW_ITERATOR, &row_iter)
-	row_idx: u16 = 0
-	for gvt.render_state_row_iterator_next(row_iter) {
-		gvt.render_state_row_get(row_iter, .CELLS, &row_cells)
-		col_idx: u16 = 0
-		for gvt.render_state_row_cells_next(row_cells) {
-			draw_cell(col_idx, row_idx, &colors)
-			col_idx += 1
-		}
-		row_idx += 1
+	layout := r.Cell_Layout{
+		cell_w    = CELL_W,
+		cell_h    = CELL_H,
+		padding_x = PADDING,
+		padding_y = PADDING,
+		y_offset  = 0,
+		font_size = FONT_SIZE,
 	}
 
-	if cursor_visible && cursor_in_viewport {
-		cx := f32(cursor_x) * CELL_W + PADDING
-		cy := f32(cursor_y) * CELL_H + PADDING
+	row_it := gvt.term_render_rows(&term)
+	for row in gvt.render_row_next(&row_it) {
+		cell_it := gvt.term_render_cells(&term)
+		for cell in gvt.render_cell_next(&cell_it) {
+			r.draw_cell(font, row, cell, colors.foreground, layout)
+		}
+	}
+
+	if cursor.visible && cursor.in_viewport {
+		cx := f32(cursor.x) * CELL_W + PADDING
+		cy := f32(cursor.y) * CELL_H + PADDING
 		rl.DrawRectangle(i32(cx), i32(cy), CELL_W, CELL_H, CURSOR_COLOR)
 	}
 
-	dirty_false := gvt.Render_State_Dirty.FALSE
-	gvt.render_state_set(render_state, .DIRTY, &dirty_false)
-
-	gvt.render_state_get(render_state, .ROW_ITERATOR, &row_iter)
-	for gvt.render_state_row_iterator_next(row_iter) {
-		dirty_val := false
-		gvt.render_state_row_set(row_iter, .DIRTY, &dirty_val)
-	}
-}
-
-draw_cell :: proc(col: u16, row: u16, colors: ^gvt.Render_State_Colors) {
-	px := f32(col) * CELL_W + PADDING
-	py := f32(row) * CELL_H + PADDING
-
-	bg_rgb: gvt.Color_Rgb
-	if gvt.render_state_row_cells_get(row_cells, .BG_COLOR, &bg_rgb) == .SUCCESS {
-		rl.DrawRectangle(i32(px), i32(py), CELL_W, CELL_H, to_rl_color(bg_rgb))
+	if selecting {
+		x := min(sel_anchor.x, sel_current.x)
+		y := min(sel_anchor.y, sel_current.y)
+		w := abs(sel_current.x - sel_anchor.x)
+		h := abs(sel_current.y - sel_anchor.y)
+		rl.DrawRectangle(i32(x), i32(y), i32(w), i32(h), SELECTION_COLOR)
+		rl.DrawRectangleLines(i32(x), i32(y), i32(w), i32(h), SELECTION_BORDER)
 	}
 
-	raw_cell: gvt.Cell
-	gvt.render_state_row_cells_get(row_cells, .RAW, &raw_cell)
-
-	has_text: bool
-	gvt.cell_get(raw_cell, .HAS_TEXT, &has_text)
-	if !has_text do return
-
-	cp: u32
-	gvt.cell_get(raw_cell, .CODEPOINT, &cp)
-	if cp == 0 || cp < 32 do return
-
-	fg_rgb: gvt.Color_Rgb
-	fg_color: rl.Color
-	if gvt.render_state_row_cells_get(row_cells, .FG_COLOR, &fg_rgb) == .SUCCESS {
-		fg_color = to_rl_color(fg_rgb)
-	} else {
-		fg_color = to_rl_color(colors.foreground)
+	if session_ended {
+		rl.DrawText("[ session ended — close window to exit ]",
+			PADDING, WINDOW_H - 24, 16, {0xff, 0x88, 0x88, 0xff})
 	}
 
-	style: gvt.Style
-	style.size = size_of(gvt.Style)
-	if gvt.render_state_row_cells_get(row_cells, .STYLE, &style) == .SUCCESS {
-		if style.bold {
-			fg_color.r = u8(min(255, int(fg_color.r) + 40))
-			fg_color.g = u8(min(255, int(fg_color.g) + 40))
-			fg_color.b = u8(min(255, int(fg_color.b) + 40))
-		}
-		if style.underline != 0 {
-			rl.DrawLine(i32(px), i32(py) + CELL_H - 1, i32(px) + CELL_W, i32(py) + CELL_H - 1, fg_color)
-		}
-		if style.strikethrough {
-			rl.DrawLine(i32(px), i32(py) + CELL_H / 2, i32(px) + CELL_W, i32(py) + CELL_H / 2, fg_color)
-		}
+	if rl.GetTime() < flash_until && len(flash_msg) > 0 {
+		cmsg := strings.clone_to_cstring(flash_msg, context.temp_allocator)
+		rl.DrawText(cmsg, PADDING, PADDING, 14, {0x88, 0xff, 0x88, 0xff})
 	}
 
-	rl.DrawTextCodepoint(font, rune(cp), {px, py}, FONT_SIZE, fg_color)
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-to_rl_color :: proc(c: gvt.Color_Rgb) -> rl.Color {
-	return {c.r, c.g, c.b, 0xff}
-}
-
-encode_utf8 :: proc(buf: []u8, cp: rune) -> int {
-	v := u32(cp)
-	if v < 0x80 {
-		buf[0] = u8(v)
-		return 1
-	} else if v < 0x800 {
-		buf[0] = u8(0xC0 | (v >> 6))
-		buf[1] = u8(0x80 | (v & 0x3F))
-		return 2
-	} else if v < 0x10000 {
-		buf[0] = u8(0xE0 | (v >> 12))
-		buf[1] = u8(0x80 | ((v >> 6) & 0x3F))
-		buf[2] = u8(0x80 | (v & 0x3F))
-		return 3
-	} else {
-		buf[0] = u8(0xF0 | (v >> 18))
-		buf[1] = u8(0x80 | ((v >> 12) & 0x3F))
-		buf[2] = u8(0x80 | ((v >> 6) & 0x3F))
-		buf[3] = u8(0x80 | (v & 0x3F))
-		return 4
-	}
+	gvt.term_render_clean(&term)
 }

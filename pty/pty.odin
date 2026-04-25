@@ -25,21 +25,24 @@ Winsize :: struct {
 
 @(default_calling_convention = "c")
 foreign libc_lib {
-	ioctl   :: proc(fd: c.int, request: c.ulong, #c_vararg args: ..any) -> c.int ---
-	execvp  :: proc(file: cstring, argv: [^]cstring) -> c.int ---
-	close   :: proc(fd: c.int) -> c.int ---
-	read    :: proc(fd: c.int, buf: rawptr, count: c.size_t) -> c.ssize_t ---
-	write   :: proc(fd: c.int, buf: rawptr, count: c.size_t) -> c.ssize_t ---
-	fcntl   :: proc(fd: c.int, cmd: c.int, #c_vararg args: ..any) -> c.int ---
-	waitpid :: proc(pid: c.int, status: ^c.int, options: c.int) -> c.int ---
-	setenv  :: proc(name: cstring, value: cstring, overwrite: c.int) -> c.int ---
-	_exit   :: proc(status: c.int) ---
+	ioctl       :: proc(fd: c.int, request: c.ulong, #c_vararg args: ..any) -> c.int ---
+	execvp      :: proc(file: cstring, argv: [^]cstring) -> c.int ---
+	close       :: proc(fd: c.int) -> c.int ---
+	read        :: proc(fd: c.int, buf: rawptr, count: c.size_t) -> c.ssize_t ---
+	write       :: proc(fd: c.int, buf: rawptr, count: c.size_t) -> c.ssize_t ---
+	fcntl       :: proc(fd: c.int, cmd: c.int, #c_vararg args: ..any) -> c.int ---
+	waitpid     :: proc(pid: c.int, status: ^c.int, options: c.int) -> c.int ---
+	setenv      :: proc(name: cstring, value: cstring, overwrite: c.int) -> c.int ---
+	_exit       :: proc(status: c.int) ---
+	__errno_location :: proc() -> ^c.int ---
 }
 
-F_GETFL    :: 3
-F_SETFL    :: 4
-O_NONBLOCK :: 0o4000
-WNOHANG    :: 1
+F_GETFL     :: 3
+F_SETFL     :: 4
+O_NONBLOCK  :: 0o4000
+WNOHANG     :: 1
+EAGAIN      :: 11
+EWOULDBLOCK :: EAGAIN
 
 Pty :: struct {
 	master_fd: c.int,
@@ -76,12 +79,31 @@ spawn :: proc(shell: cstring, cols: u16, rows: u16) -> (Pty, bool) {
 	return Pty{master_fd = master_fd, child_pid = pid}, true
 }
 
-read_bytes :: proc(p: ^Pty, buf: []u8) -> int {
-	n := read(p.master_fd, raw_data(buf), len(buf))
-	if n <= 0 {
-		return 0
+// Read available bytes from the PTY into `buf`. Returns the number of bytes
+// read and an `eof` flag distinguishing a closed PTY from a non-blocking
+// would-block. `eof = false, n = 0` means "no data right now, try later".
+read_bytes :: proc(p: ^Pty, buf: []u8) -> (n: int, eof: bool) {
+	r := read(p.master_fd, raw_data(buf), len(buf))
+	if r > 0 do return int(r), false
+	if r == 0 do return 0, true
+	e := __errno_location()^
+	if e == EAGAIN || e == EWOULDBLOCK do return 0, false
+	// Any other error (EIO when slave hangs up, etc.) means the session is gone.
+	return 0, true
+}
+
+// Drain all bytes available right now into `buf`, returning the populated
+// slice plus an eof flag (true when the slave end has hung up or errored —
+// the typical signal that the shell has exited).
+drain :: proc(p: ^Pty, buf: []u8) -> (data: []u8, eof: bool) {
+	total := 0
+	for total < len(buf) {
+		n, e := read_bytes(p, buf[total:])
+		total += n
+		if e do return buf[:total], true
+		if n == 0 do break
 	}
-	return int(n)
+	return buf[:total], false
 }
 
 write_bytes :: proc(p: ^Pty, data: []u8) {

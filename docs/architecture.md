@@ -58,17 +58,35 @@ function interface. The binding covers the complete API surface:
 - Constants like modifier bitmasks and named colors are exposed as
   typed Odin constants.
 
-### termview/pty.odin — PTY Layer
+### pty/ — PTY Layer
 
-A minimal POSIX PTY interface using `forkpty(3)` from libutil:
+A minimal POSIX PTY interface using `forkpty(3)` from libutil, shared by
+both `termview/` and `console/`:
 
-- `pty_spawn` — forks, execs a shell, returns a non-blocking master fd
-- `pty_read` — non-blocking read from the master fd
-- `pty_write` — write bytes to the master fd (input to the shell)
-- `pty_resize` — send `TIOCSWINSZ` to update terminal dimensions
+- `spawn` — forks, execs a shell, returns a non-blocking master fd
+- `read_bytes` — single non-blocking read; returns `(n, eof)` so callers
+  can distinguish a closed PTY from a transient `EAGAIN`
+- `drain` — repeated `read_bytes` until the kernel buffer empties or the
+  caller's buffer fills; returns the populated slice plus an `eof` flag
+- `write_bytes` / `write_string` / `write_byte` — writes to the master fd
+- `resize` — send `TIOCSWINSZ` to update terminal dimensions
 
 The master fd is set to `O_NONBLOCK` so reads never stall the render
 loop.
+
+### render_rl/ — Shared Raylib Helpers
+
+A package shared by `termview/` and `console/` that holds everything
+raylib-flavored that would otherwise be duplicated between them:
+
+- `draw_cell` — render one resolved cell (bg fill, glyph, underline,
+  strikethrough, bold brightening) given a `Cell_Layout` and the
+  `Render_Cell` from the wrapper iterator
+- `load_mono_font` — probe a list of standard system mono fonts, fall
+  back to raylib's bundled default
+- `key_to_vt_sequence` / `ctrl_byte` — map raylib keyboard events to
+  the VT/xterm escape sequences the shell expects
+- `to_rl_color` / `encode_utf8` — small color and UTF-8 helpers
 
 ### termview/main.odin — Rendering Pipeline
 
@@ -126,7 +144,12 @@ A higher-level Odin API built on top of the raw C bindings:
   yield `Render_Cell` structs with resolved codepoint, colors, and style
   already extracted. No manual cell/row/style API wrangling.
 - **Formatter helpers** — `term_format_plain()` / `term_format_html()`
-  return allocated byte slices.
+  return byte slices owned by the caller's allocator (default
+  `context.allocator`); release with `delete`.
+- **Allocator bridge** — `term_init` accepts an `mem.Allocator` (default
+  `context.allocator`) and routes every `libghostty-vt` allocation
+  through it via a heap-pinned C-vtable bridge, so tracking allocators
+  see leaks inside the C library.
 
 ### console/ — Embeddable Game Dev Console
 
@@ -217,7 +240,7 @@ compiles the Odin code, links against it, and runs the result.
 | Dependency     | Version   | Source          | Purpose              |
 |----------------|-----------|-----------------|----------------------|
 | Odin           | nightly   | mise            | Language / compiler  |
-| Zig            | 0.15+     | mise            | Build libghostty-vt  |
+| Zig            | 0.15.2    | mise            | Build libghostty-vt  |
 | libghostty-vt  | HEAD      | git (ghostty/)  | VT terminal engine   |
 | raylib         | 5.5       | Odin vendor     | Windowing + rendering|
 | libutil        | system    | glibc           | forkpty(3)           |
