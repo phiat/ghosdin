@@ -134,6 +134,11 @@ main :: proc() {
 		fmt.printfln("  SIMD enabled:    %v", simd_enabled)
 	}
 
+	version: gvt.String
+	if gvt.build_info(.VERSION_STRING, &version) == .SUCCESS && version.len > 0 {
+		fmt.printfln("  libghostty-vt:   %s", string(version.ptr[:version.len]))
+	}
+
 	fmt.println()
 	fmt.println("=== done ===")
 }

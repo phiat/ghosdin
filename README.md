@@ -112,16 +112,19 @@ for row in gvt.render_row_next(&row_it) {
 |-----------------|----------------------------------------------------|
 | Terminal        | Create terminals, feed VT data, query/set state    |
 | Render State    | Incremental dirty-tracking for renderers           |
-| Screen/Grid Ref | Cell and row access, grapheme clusters, styles     |
+| Screen/Grid Ref | Cell and row access, grapheme clusters, hyperlinks |
 | SGR Parser      | Parse styling escape sequences                     |
 | OSC Parser      | Parse operating system commands                    |
 | Key Encoder     | Encode keyboard events to escape sequences         |
 | Mouse Encoder   | Encode mouse events to escape sequences            |
 | Formatter       | Export content as plain text, VT, or HTML          |
 | Modes           | ANSI and DEC terminal mode utilities               |
-| Focus/Paste     | Focus encoding, paste safety checks                |
+| Focus/Paste     | Focus encoding, paste safety + bracketed encoding  |
+| Selection       | Grid-ref selection ranges                          |
+| Kitty Graphics  | Image storage, placement iteration, render geometry|
+| Sys             | Runtime callbacks (PNG decode, log)                |
 | Allocator       | Custom memory allocator support                    |
-| Build Info      | Query compile-time library configuration           |
+| Build Info      | Query compile-time library configuration + version |
 
 ### console — Embeddable Game Dev Console
 

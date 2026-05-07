@@ -34,6 +34,7 @@ Result :: enum c.int {
 	OUT_OF_MEMORY  = -1,
 	INVALID_VALUE  = -2,
 	OUT_OF_SPACE   = -3,
+	NO_VALUE       = -4,
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +344,7 @@ MODE_ENABLE_MODE_3       :: Mode(40)
 MODE_REVERSE_WRAP        :: Mode(45)
 MODE_ALT_SCREEN_LEGACY   :: Mode(47)
 MODE_KEYPAD_KEYS         :: Mode(66)
+MODE_BACKARROW_KEY_MODE  :: Mode(67) // DECBKM
 MODE_LEFT_RIGHT_MARGIN   :: Mode(69)
 MODE_NORMAL_MOUSE        :: Mode(1000)
 MODE_BUTTON_MOUSE        :: Mode(1002)
@@ -353,13 +355,17 @@ MODE_SGR_MOUSE           :: Mode(1006)
 MODE_ALT_SCROLL          :: Mode(1007)
 MODE_URXVT_MOUSE         :: Mode(1015)
 MODE_SGR_PIXELS_MOUSE    :: Mode(1016)
+MODE_NUMLOCK_KEYPAD      :: Mode(1035)
+MODE_ALT_ESC_PREFIX      :: Mode(1036)
 MODE_ALT_SENDS_ESC       :: Mode(1039)
+MODE_REVERSE_WRAP_EXT    :: Mode(1045)
 MODE_ALT_SCREEN          :: Mode(1047)
 MODE_SAVE_CURSOR         :: Mode(1048)
 MODE_ALT_SCREEN_SAVE     :: Mode(1049)
 MODE_BRACKETED_PASTE     :: Mode(2004)
 MODE_SYNC_OUTPUT         :: Mode(2026)
 MODE_GRAPHEME_CLUSTER    :: Mode(2027)
+MODE_COLOR_SCHEME_REPORT :: Mode(2031)
 MODE_IN_BAND_RESIZE      :: Mode(2048)
 
 Mode_Report_State :: enum c.int {
@@ -469,38 +475,61 @@ Terminal_Size_Fn              :: #type proc "c" (terminal: Terminal, userdata: r
 Terminal_Xtversion_Fn         :: #type proc "c" (terminal: Terminal, userdata: rawptr) -> String
 
 Terminal_Option :: enum c.int {
-	USERDATA          = 0,
-	WRITE_PTY         = 1,
-	BELL              = 2,
-	ENQUIRY           = 3,
-	XTVERSION         = 4,
-	TITLE_CHANGED     = 5,
-	SIZE              = 6,
-	COLOR_SCHEME      = 7,
-	DEVICE_ATTRIBUTES = 8,
-	TITLE             = 9,
-	PWD               = 10,
+	USERDATA                       = 0,
+	WRITE_PTY                      = 1,
+	BELL                           = 2,
+	ENQUIRY                        = 3,
+	XTVERSION                      = 4,
+	TITLE_CHANGED                  = 5,
+	SIZE                           = 6,
+	COLOR_SCHEME                   = 7,
+	DEVICE_ATTRIBUTES              = 8,
+	TITLE                          = 9,
+	PWD                            = 10,
+	COLOR_FOREGROUND               = 11,
+	COLOR_BACKGROUND               = 12,
+	COLOR_CURSOR                   = 13,
+	COLOR_PALETTE                  = 14,
+	KITTY_IMAGE_STORAGE_LIMIT      = 15,
+	KITTY_IMAGE_MEDIUM_FILE        = 16,
+	KITTY_IMAGE_MEDIUM_TEMP_FILE   = 17,
+	KITTY_IMAGE_MEDIUM_SHARED_MEM  = 18,
+	APC_MAX_BYTES                  = 19,
+	APC_MAX_BYTES_KITTY            = 20,
 }
 
 Terminal_Data :: enum c.int {
-	INVALID                = 0,
-	COLS                   = 1,
-	ROWS                   = 2,
-	CURSOR_X               = 3,
-	CURSOR_Y               = 4,
-	CURSOR_PENDING_WRAP    = 5,
-	ACTIVE_SCREEN          = 6,
-	CURSOR_VISIBLE         = 7,
-	KITTY_KEYBOARD_FLAGS   = 8,
-	SCROLLBAR              = 9,
-	CURSOR_STYLE           = 10,
-	MOUSE_TRACKING         = 11,
-	TITLE                  = 12,
-	PWD                    = 13,
-	TOTAL_ROWS             = 14,
-	SCROLLBACK_ROWS        = 15,
-	WIDTH_PX               = 16,
-	HEIGHT_PX              = 17,
+	INVALID                        = 0,
+	COLS                           = 1,
+	ROWS                           = 2,
+	CURSOR_X                       = 3,
+	CURSOR_Y                       = 4,
+	CURSOR_PENDING_WRAP            = 5,
+	ACTIVE_SCREEN                  = 6,
+	CURSOR_VISIBLE                 = 7,
+	KITTY_KEYBOARD_FLAGS           = 8,
+	SCROLLBAR                      = 9,
+	CURSOR_STYLE                   = 10,
+	MOUSE_TRACKING                 = 11,
+	TITLE                          = 12,
+	PWD                            = 13,
+	TOTAL_ROWS                     = 14,
+	SCROLLBACK_ROWS                = 15,
+	WIDTH_PX                       = 16,
+	HEIGHT_PX                      = 17,
+	COLOR_FOREGROUND               = 18,
+	COLOR_BACKGROUND               = 19,
+	COLOR_CURSOR                   = 20,
+	COLOR_PALETTE                  = 21,
+	COLOR_FOREGROUND_DEFAULT       = 22,
+	COLOR_BACKGROUND_DEFAULT       = 23,
+	COLOR_CURSOR_DEFAULT           = 24,
+	COLOR_PALETTE_DEFAULT          = 25,
+	KITTY_IMAGE_STORAGE_LIMIT      = 26,
+	KITTY_IMAGE_MEDIUM_FILE        = 27,
+	KITTY_IMAGE_MEDIUM_TEMP_FILE   = 28,
+	KITTY_IMAGE_MEDIUM_SHARED_MEM  = 29,
+	KITTY_GRAPHICS                 = 30,
 }
 
 // ---------------------------------------------------------------------------
@@ -608,6 +637,12 @@ Build_Info :: enum c.int {
 	KITTY_GRAPHICS     = 2,
 	TMUX_CONTROL_MODE  = 3,
 	OPTIMIZE           = 4,
+	VERSION_STRING     = 5,
+	VERSION_MAJOR      = 6,
+	VERSION_MINOR      = 7,
+	VERSION_PATCH      = 8,
+	VERSION_PRE        = 9,
+	VERSION_BUILD      = 10,
 }
 
 // ---------------------------------------------------------------------------
@@ -717,6 +752,7 @@ Key_Encoder_Option :: enum c.int {
 	MODIFY_OTHER_KEYS_STATE_2  = 4,
 	KITTY_FLAGS                = 5,
 	MACOS_OPTION_AS_ALT        = 6,
+	BACKARROW_KEY_MODE         = 7, // DECBKM
 }
 
 // ---------------------------------------------------------------------------
@@ -864,6 +900,124 @@ Render_State_Colors :: struct {
 	palette:         [256]Color_Rgb,
 }
 
+// ---------------------------------------------------------------------------
+// Selection
+// ---------------------------------------------------------------------------
+
+Selection :: struct {
+	size:      c.size_t,
+	start:     Grid_Ref,
+	end:       Grid_Ref,
+	rectangle: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Sys (process-global runtime callbacks)
+// ---------------------------------------------------------------------------
+
+Sys_Image :: struct {
+	width:    u32,
+	height:   u32,
+	data:     [^]u8,
+	data_len: c.size_t,
+}
+
+Sys_Log_Level :: enum c.int {
+	ERROR   = 0,
+	WARNING = 1,
+	INFO    = 2,
+	DEBUG   = 3,
+}
+
+Sys_Log_Fn        :: #type proc "c" (userdata: rawptr, level: Sys_Log_Level, scope: [^]u8, scope_len: c.size_t, message: [^]u8, message_len: c.size_t)
+Sys_Decode_Png_Fn :: #type proc "c" (userdata: rawptr, allocator: ^Allocator, data: [^]u8, data_len: c.size_t, out: ^Sys_Image) -> bool
+
+Sys_Option :: enum c.int {
+	USERDATA   = 0,
+	DECODE_PNG = 1,
+	LOG        = 2,
+}
+
+// ---------------------------------------------------------------------------
+// Kitty Graphics
+// ---------------------------------------------------------------------------
+
+Kitty_Graphics                     :: distinct rawptr
+Kitty_Graphics_Image               :: distinct rawptr
+Kitty_Graphics_Placement_Iterator  :: distinct rawptr
+
+Kitty_Graphics_Data :: enum c.int {
+	INVALID            = 0,
+	PLACEMENT_ITERATOR = 1,
+}
+
+Kitty_Graphics_Placement_Data :: enum c.int {
+	INVALID        = 0,
+	IMAGE_ID       = 1,
+	PLACEMENT_ID   = 2,
+	IS_VIRTUAL     = 3,
+	X_OFFSET       = 4,
+	Y_OFFSET       = 5,
+	SOURCE_X       = 6,
+	SOURCE_Y       = 7,
+	SOURCE_WIDTH   = 8,
+	SOURCE_HEIGHT  = 9,
+	COLUMNS        = 10,
+	ROWS           = 11,
+	Z              = 12,
+}
+
+Kitty_Placement_Layer :: enum c.int {
+	ALL         = 0,
+	BELOW_BG    = 1,
+	BELOW_TEXT  = 2,
+	ABOVE_TEXT  = 3,
+}
+
+Kitty_Graphics_Placement_Iterator_Option :: enum c.int {
+	LAYER = 0,
+}
+
+Kitty_Image_Format :: enum c.int {
+	RGB         = 0,
+	RGBA        = 1,
+	PNG         = 2,
+	GRAY_ALPHA  = 3,
+	GRAY        = 4,
+}
+
+Kitty_Image_Compression :: enum c.int {
+	NONE          = 0,
+	ZLIB_DEFLATE  = 1,
+}
+
+Kitty_Graphics_Image_Data :: enum c.int {
+	INVALID      = 0,
+	ID           = 1,
+	NUMBER       = 2,
+	WIDTH        = 3,
+	HEIGHT       = 4,
+	FORMAT       = 5,
+	COMPRESSION  = 6,
+	DATA_PTR     = 7,
+	DATA_LEN     = 8,
+}
+
+Kitty_Graphics_Placement_Render_Info :: struct {
+	size:             c.size_t,
+	pixel_width:      u32,
+	pixel_height:     u32,
+	grid_cols:        u32,
+	grid_rows:        u32,
+	viewport_col:     i32,
+	viewport_row:     i32,
+	viewport_visible: bool,
+	source_x:         u32,
+	source_y:         u32,
+	source_width:     u32,
+	source_height:    u32,
+}
+
 // ===========================================================================
 // Foreign function declarations
 // ===========================================================================
@@ -882,27 +1036,32 @@ foreign lib {
 	style_is_default :: proc(style: ^Style) -> bool ---
 
 	// -- Terminal --
-	terminal_new             :: proc(allocator: ^Allocator, terminal: ^Terminal, options: Terminal_Options) -> Result ---
-	terminal_free            :: proc(terminal: Terminal) ---
-	terminal_reset           :: proc(terminal: Terminal) ---
-	terminal_resize          :: proc(terminal: Terminal, cols: u16, rows: u16, cell_width_px: u32, cell_height_px: u32) -> Result ---
-	terminal_set             :: proc(terminal: Terminal, option: Terminal_Option, value: rawptr) -> Result ---
-	terminal_vt_write        :: proc(terminal: Terminal, data: [^]u8, len: c.size_t) ---
-	terminal_scroll_viewport :: proc(terminal: Terminal, behavior: Terminal_Scroll_Viewport) ---
-	terminal_mode_get        :: proc(terminal: Terminal, mode: Mode, out_value: ^bool) -> Result ---
-	terminal_mode_set        :: proc(terminal: Terminal, mode: Mode, value: bool) -> Result ---
-	terminal_get             :: proc(terminal: Terminal, data: Terminal_Data, out: rawptr) -> Result ---
-	terminal_grid_ref        :: proc(terminal: Terminal, point: Point, out_ref: ^Grid_Ref) -> Result ---
+	terminal_new                 :: proc(allocator: ^Allocator, terminal: ^Terminal, options: Terminal_Options) -> Result ---
+	terminal_free                :: proc(terminal: Terminal) ---
+	terminal_reset               :: proc(terminal: Terminal) ---
+	terminal_resize              :: proc(terminal: Terminal, cols: u16, rows: u16, cell_width_px: u32, cell_height_px: u32) -> Result ---
+	terminal_set                 :: proc(terminal: Terminal, option: Terminal_Option, value: rawptr) -> Result ---
+	terminal_vt_write            :: proc(terminal: Terminal, data: [^]u8, len: c.size_t) ---
+	terminal_scroll_viewport     :: proc(terminal: Terminal, behavior: Terminal_Scroll_Viewport) ---
+	terminal_mode_get            :: proc(terminal: Terminal, mode: Mode, out_value: ^bool) -> Result ---
+	terminal_mode_set            :: proc(terminal: Terminal, mode: Mode, value: bool) -> Result ---
+	terminal_get                 :: proc(terminal: Terminal, data: Terminal_Data, out: rawptr) -> Result ---
+	terminal_get_multi           :: proc(terminal: Terminal, count: c.size_t, keys: [^]Terminal_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+	terminal_grid_ref            :: proc(terminal: Terminal, point: Point, out_ref: ^Grid_Ref) -> Result ---
+	terminal_point_from_grid_ref :: proc(terminal: Terminal, ref: ^Grid_Ref, tag: Point_Tag, out: ^Point_Coordinate) -> Result ---
 
 	// -- Screen --
-	cell_get :: proc(cell: Cell, data: Cell_Data, out: rawptr) -> Result ---
-	row_get  :: proc(row: Row, data: Row_Data, out: rawptr) -> Result ---
+	cell_get       :: proc(cell: Cell, data: Cell_Data, out: rawptr) -> Result ---
+	cell_get_multi :: proc(cell: Cell, count: c.size_t, keys: [^]Cell_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+	row_get        :: proc(row: Row, data: Row_Data, out: rawptr) -> Result ---
+	row_get_multi  :: proc(row: Row, count: c.size_t, keys: [^]Row_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
 
 	// -- Grid Ref --
-	grid_ref_cell      :: proc(ref: ^Grid_Ref, out_cell: ^Cell) -> Result ---
-	grid_ref_row       :: proc(ref: ^Grid_Ref, out_row: ^Row) -> Result ---
-	grid_ref_graphemes :: proc(ref: ^Grid_Ref, buf: [^]u32, buf_len: c.size_t, out_len: ^c.size_t) -> Result ---
-	grid_ref_style     :: proc(ref: ^Grid_Ref, out_style: ^Style) -> Result ---
+	grid_ref_cell          :: proc(ref: ^Grid_Ref, out_cell: ^Cell) -> Result ---
+	grid_ref_row           :: proc(ref: ^Grid_Ref, out_row: ^Row) -> Result ---
+	grid_ref_graphemes     :: proc(ref: ^Grid_Ref, buf: [^]u32, buf_len: c.size_t, out_len: ^c.size_t) -> Result ---
+	grid_ref_hyperlink_uri :: proc(ref: ^Grid_Ref, buf: [^]u8, buf_len: c.size_t, out_len: ^c.size_t) -> Result ---
+	grid_ref_style         :: proc(ref: ^Grid_Ref, out_style: ^Style) -> Result ---
 
 	// -- Mode Report --
 	mode_report_encode :: proc(mode: Mode, state: Mode_Report_State, buf: [^]u8, buf_len: c.size_t, out_written: ^c.size_t) -> Result ---
@@ -935,6 +1094,7 @@ foreign lib {
 
 	// -- Paste --
 	paste_is_safe :: proc(data: cstring, len: c.size_t) -> bool ---
+	paste_encode  :: proc(data: [^]u8, data_len: c.size_t, bracketed: bool, buf: [^]u8, buf_len: c.size_t, out_written: ^c.size_t) -> Result ---
 
 	// -- Formatter --
 	formatter_terminal_new :: proc(allocator: ^Allocator, formatter: ^Formatter, terminal: Terminal, options: Formatter_Terminal_Options) -> Result ---
@@ -944,6 +1104,32 @@ foreign lib {
 
 	// -- Build Info --
 	build_info :: proc(data: Build_Info, out: rawptr) -> Result ---
+
+	// -- Type metadata (struct layout JSON, mainly for non-C bindings) --
+	type_json :: proc() -> cstring ---
+
+	// -- Sys (process-global runtime callbacks) --
+	sys_set        :: proc(option: Sys_Option, value: rawptr) -> Result ---
+	sys_log_stderr :: proc(userdata: rawptr, level: Sys_Log_Level, scope: [^]u8, scope_len: c.size_t, message: [^]u8, message_len: c.size_t) ---
+
+	// -- Kitty Graphics --
+	kitty_graphics_get                       :: proc(graphics: Kitty_Graphics, data: Kitty_Graphics_Data, out: rawptr) -> Result ---
+	kitty_graphics_image                     :: proc(graphics: Kitty_Graphics, image_id: u32) -> Kitty_Graphics_Image ---
+	kitty_graphics_image_get                 :: proc(image: Kitty_Graphics_Image, data: Kitty_Graphics_Image_Data, out: rawptr) -> Result ---
+	kitty_graphics_image_get_multi           :: proc(image: Kitty_Graphics_Image, count: c.size_t, keys: [^]Kitty_Graphics_Image_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+
+	kitty_graphics_placement_iterator_new    :: proc(allocator: ^Allocator, out_iterator: ^Kitty_Graphics_Placement_Iterator) -> Result ---
+	kitty_graphics_placement_iterator_free   :: proc(iterator: Kitty_Graphics_Placement_Iterator) ---
+	kitty_graphics_placement_iterator_set    :: proc(iterator: Kitty_Graphics_Placement_Iterator, option: Kitty_Graphics_Placement_Iterator_Option, value: rawptr) -> Result ---
+	kitty_graphics_placement_next            :: proc(iterator: Kitty_Graphics_Placement_Iterator) -> bool ---
+	kitty_graphics_placement_get             :: proc(iterator: Kitty_Graphics_Placement_Iterator, data: Kitty_Graphics_Placement_Data, out: rawptr) -> Result ---
+	kitty_graphics_placement_get_multi       :: proc(iterator: Kitty_Graphics_Placement_Iterator, count: c.size_t, keys: [^]Kitty_Graphics_Placement_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+	kitty_graphics_placement_rect            :: proc(iterator: Kitty_Graphics_Placement_Iterator, image: Kitty_Graphics_Image, terminal: Terminal, out_selection: ^Selection) -> Result ---
+	kitty_graphics_placement_pixel_size      :: proc(iterator: Kitty_Graphics_Placement_Iterator, image: Kitty_Graphics_Image, terminal: Terminal, out_width: ^u32, out_height: ^u32) -> Result ---
+	kitty_graphics_placement_grid_size       :: proc(iterator: Kitty_Graphics_Placement_Iterator, image: Kitty_Graphics_Image, terminal: Terminal, out_cols: ^u32, out_rows: ^u32) -> Result ---
+	kitty_graphics_placement_viewport_pos    :: proc(iterator: Kitty_Graphics_Placement_Iterator, image: Kitty_Graphics_Image, terminal: Terminal, out_col: ^i32, out_row: ^i32) -> Result ---
+	kitty_graphics_placement_source_rect     :: proc(iterator: Kitty_Graphics_Placement_Iterator, image: Kitty_Graphics_Image, out_x: ^u32, out_y: ^u32, out_width: ^u32, out_height: ^u32) -> Result ---
+	kitty_graphics_placement_render_info     :: proc(iterator: Kitty_Graphics_Placement_Iterator, image: Kitty_Graphics_Image, terminal: Terminal, out_info: ^Kitty_Graphics_Placement_Render_Info) -> Result ---
 
 	// -- Key Event --
 	key_event_new                    :: proc(allocator: ^Allocator, event: ^Key_Event) -> Result ---
@@ -996,6 +1182,7 @@ foreign lib {
 	render_state_free            :: proc(state: Render_State) ---
 	render_state_update          :: proc(state: Render_State, terminal: Terminal) -> Result ---
 	render_state_get             :: proc(state: Render_State, data: Render_State_Data, out: rawptr) -> Result ---
+	render_state_get_multi       :: proc(state: Render_State, count: c.size_t, keys: [^]Render_State_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
 	render_state_set             :: proc(state: Render_State, option: Render_State_Option, value: rawptr) -> Result ---
 	render_state_colors_get      :: proc(state: Render_State, out_colors: ^Render_State_Colors) -> Result ---
 
@@ -1003,11 +1190,13 @@ foreign lib {
 	render_state_row_iterator_free :: proc(iterator: Render_State_Row_Iterator) ---
 	render_state_row_iterator_next :: proc(iterator: Render_State_Row_Iterator) -> bool ---
 	render_state_row_get           :: proc(iterator: Render_State_Row_Iterator, data: Render_State_Row_Data, out: rawptr) -> Result ---
+	render_state_row_get_multi     :: proc(iterator: Render_State_Row_Iterator, count: c.size_t, keys: [^]Render_State_Row_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
 	render_state_row_set           :: proc(iterator: Render_State_Row_Iterator, option: Render_State_Row_Option, value: rawptr) -> Result ---
 
-	render_state_row_cells_new    :: proc(allocator: ^Allocator, out_cells: ^Render_State_Row_Cells) -> Result ---
-	render_state_row_cells_next   :: proc(cells: Render_State_Row_Cells) -> bool ---
-	render_state_row_cells_select :: proc(cells: Render_State_Row_Cells, x: u16) -> Result ---
-	render_state_row_cells_get    :: proc(cells: Render_State_Row_Cells, data: Render_State_Row_Cells_Data, out: rawptr) -> Result ---
-	render_state_row_cells_free   :: proc(cells: Render_State_Row_Cells) ---
+	render_state_row_cells_new       :: proc(allocator: ^Allocator, out_cells: ^Render_State_Row_Cells) -> Result ---
+	render_state_row_cells_next      :: proc(cells: Render_State_Row_Cells) -> bool ---
+	render_state_row_cells_select    :: proc(cells: Render_State_Row_Cells, x: u16) -> Result ---
+	render_state_row_cells_get       :: proc(cells: Render_State_Row_Cells, data: Render_State_Row_Cells_Data, out: rawptr) -> Result ---
+	render_state_row_cells_get_multi :: proc(cells: Render_State_Row_Cells, count: c.size_t, keys: [^]Render_State_Row_Cells_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+	render_state_row_cells_free      :: proc(cells: Render_State_Row_Cells) ---
 }
