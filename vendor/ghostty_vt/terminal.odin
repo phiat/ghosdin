@@ -16,6 +16,7 @@ Error :: enum {
 	Out_Of_Memory,
 	Invalid_Value,
 	Out_Of_Space,
+	No_Value,
 }
 
 to_error :: proc(r: Result) -> Error {
@@ -24,6 +25,7 @@ to_error :: proc(r: Result) -> Error {
 	case .OUT_OF_MEMORY: return .Out_Of_Memory
 	case .INVALID_VALUE: return .Invalid_Value
 	case .OUT_OF_SPACE:  return .Out_Of_Space
+	case .NO_VALUE:      return .No_Value
 	}
 	return .Invalid_Value
 }
