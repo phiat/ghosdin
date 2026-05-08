@@ -1,7 +1,7 @@
 # ghosdin
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Odin](https://img.shields.io/badge/odin-nightly-orange.svg)](https://odin-lang.org/)
+[![Odin](https://img.shields.io/badge/odin-dev--2026--05-orange.svg)](https://odin-lang.org/)
 [![Zig](https://img.shields.io/badge/zig-0.15.2-f7a41d.svg)](https://ziglang.org/)
 [![raylib](https://img.shields.io/badge/raylib-5.5-white.svg)](https://www.raylib.com/)
 [![Platform](https://img.shields.io/badge/platform-linux-lightgrey.svg)](#)
@@ -34,7 +34,7 @@ ghosdin/
 
 ### Prerequisites
 
-- [Odin](https://odin-lang.org/) (nightly)
+- [Odin](https://odin-lang.org/) `dev-2026-05` or newer (the `dev-2026-05` API set is what the bindings target)
 - [Zig](https://ziglang.org/) 0.15.2 — to build libghostty-vt
   (pinned in `.mise.toml`; upstream ghostty does not yet support 0.16)
 - [just](https://github.com/casey/just) — task runner
