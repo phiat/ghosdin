@@ -1,2 +1,3 @@
 [tools]
-zig = "0.15.2"
+zig = "0.17.0"
+odin = { version = "dev-2026-10", exe = "odin" }
