@@ -35,6 +35,9 @@ Result :: enum c.int {
 	INVALID_VALUE  = -2,
 	OUT_OF_SPACE   = -3,
 	NO_VALUE       = -4,
+	IO_ERROR       = -5,
+	LIMIT_EXCEEDED = -6,
+	REJECTED       = -7,
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +419,7 @@ Size_Report_Style :: enum c.int {
 	CSI_14_T  = 1,
 	CSI_16_T  = 2,
 	CSI_18_T  = 3,
+	CSI_19_T  = 4,
 }
 
 Size_Report_Size :: struct {
@@ -431,21 +435,19 @@ Size_Report_Size :: struct {
 
 Terminal :: distinct rawptr
 
-Terminal_Options :: struct {
-	cols:           u16,
-	rows:           u16,
-	max_scrollback: c.size_t,
-}
-
 Terminal_Scroll_Viewport_Tag :: enum c.int {
 	TOP    = 0,
 	BOTTOM = 1,
 	DELTA  = 2,
+	ROW    = 3, // absolute row; row 0 is the top of the scrollback
+	DELTA_PROMPT = 4, // jump by shell prompts (needs semantic prompt marks)
 }
 
 Terminal_Scroll_Viewport_Value :: struct #raw_union {
-	delta:    c.intptr_t,
-	_padding: [2]u64,
+	delta:        c.intptr_t,
+	row:          u64,
+	delta_prompt: c.intptr_t,
+	_padding:     [2]u64,
 }
 
 Terminal_Scroll_Viewport :: struct {
@@ -496,6 +498,33 @@ Terminal_Option :: enum c.int {
 	KITTY_IMAGE_MEDIUM_SHARED_MEM  = 18,
 	APC_MAX_BYTES                  = 19,
 	APC_MAX_BYTES_KITTY            = 20,
+	SELECTION                      = 21,
+	DEFAULT_CURSOR_STYLE           = 22,
+	DEFAULT_CURSOR_BLINK           = 23,
+	GLYPH_PROTOCOL                 = 24,
+	PWD_CHANGED                    = 25,
+	CLIPBOARD_WRITE                = 26,
+	SCROLLBACK_MAX_BYTES           = 27,
+	SCROLLBACK_MAX_LINES           = 28,
+	DESKTOP_NOTIFICATION           = 29,
+	PROGRESS_REPORT                = 30,
+	CONTINUATION_MAX_BYTES         = 31,
+	TITLE_REPORT                   = 32,
+	MODE_DEFAULT                   = 33, // value: ^Terminal_Mode_Config (also the reset default)
+	MODE                           = 34, // value: ^Terminal_Mode_Config
+	UNKNOWN_SEQUENCE               = 35,
+	UNKNOWN_MAX_BYTES              = 36,
+	TERMINFO_NAME                  = 37,
+	CLIPBOARD_READ                 = 38,
+	CLIPBOARD_WRITE_MAX_BYTES      = 39,
+	RESIZE_PULL_SCROLLBACK         = 40,
+	RENDER_HOLD                    = 41,
+	SEMANTIC_PROMPT                = 42,
+	RESET                          = 43,
+	XT_CHECKSUM_REPORT             = 44,
+	XT_CHECKSUM_EXTENSION          = 45,
+	PROGRAM_STATUS                 = 46,
+	RESIZE_WINDOW                  = 47,
 }
 
 Terminal_Data :: enum c.int {
@@ -530,6 +559,18 @@ Terminal_Data :: enum c.int {
 	KITTY_IMAGE_MEDIUM_TEMP_FILE   = 28,
 	KITTY_IMAGE_MEDIUM_SHARED_MEM  = 29,
 	KITTY_GRAPHICS                 = 30,
+	SELECTION                      = 31,
+	VIEWPORT_ACTIVE                = 32,
+	VT_PROCESSING_ERROR            = 33,
+	SCROLLBACK_MAX_BYTES           = 34,
+	SCROLLBACK_MAX_LINES           = 35,
+	CONTINUATION_MAX_BYTES         = 36,
+	MODE                           = 37, // in/out: ^Terminal_Mode_Config (set .mode first)
+	VT_GROUND                      = 38,
+	CURSOR_AT_PROMPT               = 39,
+	CLIPBOARD_WRITE_MAX_BYTES      = 40,
+	MOUSE_SHAPE                    = 41,
+	MEMORY_USAGE                   = 42,
 }
 
 // ---------------------------------------------------------------------------
@@ -563,11 +604,20 @@ Osc_Command_Type :: enum c.int {
 	CONEMU_XTERM_EMULATION               = 20,
 	CONEMU_COMMENT                        = 21,
 	KITTY_TEXT_SIZING                     = 22,
+	KITTY_CLIPBOARD_PROTOCOL              = 23,
+	KITTY_DND_PROTOCOL                    = 24,
+	HIERARCHICAL_CONTEXT                  = 25,
+	KITTY_DESKTOP_NOTIFICATION            = 26,
+	UNKNOWN                               = 27,
+	PROGRAM_STATUS                        = 28,
 }
 
 Osc_Command_Data :: enum c.int {
 	INVALID                       = 0,
 	CHANGE_WINDOW_TITLE_STR       = 1,
+	UNKNOWN_CONTENT               = 2,
+	UNKNOWN_TRUNCATED             = 3,
+	UNKNOWN_TERMINATOR            = 4,
 }
 
 // ---------------------------------------------------------------------------
@@ -618,6 +668,7 @@ Formatter_Terminal_Options :: struct {
 	unwrap: bool,
 	trim:   bool,
 	extra:  Formatter_Terminal_Extra,
+	selection: ^Selection, // optional: restrict output to this range (nil = whole screen)
 }
 
 // ---------------------------------------------------------------------------
@@ -864,10 +915,17 @@ Render_State_Data :: enum c.int {
 	CURSOR_VIEWPORT_X          = 15,
 	CURSOR_VIEWPORT_Y          = 16,
 	CURSOR_VIEWPORT_WIDE_TAIL  = 17,
+	CURSOR                     = 18, // ^Render_State_Cursor (sized struct)
+	COLORS                     = 19, // ^Render_State_Colors (sized struct)
+	OVERSCAN                   = 20,
+	OVERSCAN_REQUEST           = 21,
+	IMAGE_ITERATOR             = 22,
+	IMAGE_PLACEMENTS_GENERATION = 23,
 }
 
 Render_State_Option :: enum c.int {
-	DIRTY = 0,
+	DIRTY    = 0,
+	OVERSCAN = 1,
 }
 
 Render_State_Row_Data :: enum c.int {
@@ -875,6 +933,10 @@ Render_State_Row_Data :: enum c.int {
 	DIRTY   = 1,
 	RAW     = 2,
 	CELLS   = 3,
+	SELECTION  = 4,
+	CELLS_RAW  = 5,
+	VIEWPORT_Y = 6,
+	ID         = 7,
 }
 
 Render_State_Row_Option :: enum c.int {
@@ -889,6 +951,9 @@ Render_State_Row_Cells_Data :: enum c.int {
 	GRAPHEMES_BUF  = 4,
 	BG_COLOR       = 5,
 	FG_COLOR       = 6,
+	SELECTED       = 7,
+	HAS_STYLING    = 8,
+	GRAPHEMES_UTF8 = 9,
 }
 
 Render_State_Colors :: struct {
@@ -936,6 +1001,7 @@ Sys_Option :: enum c.int {
 	USERDATA   = 0,
 	DECODE_PNG = 1,
 	LOG        = 2,
+	RANDOM_SECURE = 3,
 }
 
 // ---------------------------------------------------------------------------
@@ -949,6 +1015,7 @@ Kitty_Graphics_Placement_Iterator  :: distinct rawptr
 Kitty_Graphics_Data :: enum c.int {
 	INVALID            = 0,
 	PLACEMENT_ITERATOR = 1,
+	GENERATION         = 2,
 }
 
 Kitty_Graphics_Placement_Data :: enum c.int {
@@ -1001,6 +1068,7 @@ Kitty_Graphics_Image_Data :: enum c.int {
 	COMPRESSION  = 6,
 	DATA_PTR     = 7,
 	DATA_LEN     = 8,
+	GENERATION   = 9,
 }
 
 Kitty_Graphics_Placement_Render_Info :: struct {
@@ -1016,6 +1084,661 @@ Kitty_Graphics_Placement_Render_Info :: struct {
 	source_y:         u32,
 	source_width:     u32,
 	source_height:    u32,
+}
+
+// ---------------------------------------------------------------------------
+// NEW: opaque handles
+// ---------------------------------------------------------------------------
+
+Render_State_Image_Iterator :: distinct rawptr
+Search :: distinct rawptr
+Selection_Gesture :: distinct rawptr
+Selection_Gesture_Event :: distinct rawptr
+Snapshot_Decoder :: distinct rawptr
+Tracked_Grid_Ref :: distinct rawptr
+
+// ---------------------------------------------------------------------------
+// NEW: enums
+// ---------------------------------------------------------------------------
+
+Clipboard_Location :: enum c.int {
+	STANDARD  = 0,
+	SELECTION = 1,
+	PRIMARY   = 2,
+}
+
+Clipboard_Read_Result :: enum c.int {
+	SUCCESS     = 0,
+	DENIED      = 1,
+	UNSUPPORTED = 2,
+	BUSY        = 3,
+	IO_ERROR    = 4,
+}
+
+Clipboard_Write_Result :: enum c.int {
+	SUCCESS      = 0,
+	DENIED       = 1,
+	UNSUPPORTED  = 2,
+	BUSY         = 3,
+	INVALID_DATA = 4,
+	IO_ERROR     = 5,
+}
+
+Image_Protocol :: enum c.int {
+	KITTY = 0,
+}
+
+Mouse_Shape :: enum c.int {
+	DEFAULT       = 0,
+	CONTEXT_MENU  = 1,
+	HELP          = 2,
+	POINTER       = 3,
+	PROGRESS      = 4,
+	WAIT          = 5,
+	CELL          = 6,
+	CROSSHAIR     = 7,
+	TEXT          = 8,
+	VERTICAL_TEXT = 9,
+	ALIAS         = 10,
+	COPY          = 11,
+	MOVE          = 12,
+	NO_DROP       = 13,
+	NOT_ALLOWED   = 14,
+	GRAB          = 15,
+	GRABBING      = 16,
+	ALL_SCROLL    = 17,
+	COL_RESIZE    = 18,
+	ROW_RESIZE    = 19,
+	N_RESIZE      = 20,
+	E_RESIZE      = 21,
+	S_RESIZE      = 22,
+	W_RESIZE      = 23,
+	NE_RESIZE     = 24,
+	NW_RESIZE     = 25,
+	SE_RESIZE     = 26,
+	SW_RESIZE     = 27,
+	EW_RESIZE     = 28,
+	NS_RESIZE     = 29,
+	NESW_RESIZE   = 30,
+	NWSE_RESIZE   = 31,
+	ZOOM_IN       = 32,
+	ZOOM_OUT      = 33,
+}
+
+Osc_Option :: enum c.int {
+	UNKNOWN_MAX_BYTES = 0,
+}
+
+Osc_Terminator :: enum c.int {
+	ST  = 0,
+	BEL = 1,
+}
+
+Paste_Source :: enum c.int {
+	CLIPBOARD = 0,
+	TEXT      = 1,
+}
+
+Program_Status_Kind :: enum c.int {
+	NONE       = 0,
+	PERMISSION = 1,
+	QUESTION   = 2,
+	AUTH       = 3,
+}
+
+Program_Status_State :: enum c.int {
+	IDLE    = 0,
+	WORKING = 1,
+	DONE    = 2,
+	BLOCKED = 3,
+	ERROR   = 4,
+	CLEAR   = 5,
+}
+
+Render_State_Image_Data :: enum c.int {
+	INVALID            = 0,
+	PROTOCOL           = 1,
+	IMAGE_ID           = 2,
+	IMAGE_GENERATION   = 3,
+	LAYER              = 4,
+	Z                  = 5,
+	VIEWPORT_COL       = 6,
+	VIEWPORT_ROW       = 7,
+	GRID_COLS          = 8,
+	GRID_ROWS          = 9,
+	CELL_OFFSET_X      = 10,
+	CELL_OFFSET_Y      = 11,
+	PIXEL_WIDTH        = 12,
+	PIXEL_HEIGHT       = 13,
+	SOURCE_X           = 14,
+	SOURCE_Y           = 15,
+	SOURCE_WIDTH       = 16,
+	SOURCE_HEIGHT      = 17,
+	KITTY_PLACEMENT_ID = 18,
+	KITTY_KIND         = 19,
+}
+
+Render_State_Image_Layer :: enum c.int {
+	BELOW_BACKGROUND = 0,
+	BELOW_TEXT       = 1,
+	ABOVE_TEXT       = 2,
+}
+
+Render_State_Kitty_Placement_Kind :: enum c.int {
+	VIRTUAL  = 0,
+	RELATIVE = 1,
+	FIXED    = 2,
+}
+
+Search_Data :: enum c.int {
+	STATUS           = 0,
+	NEEDLE           = 1,
+	TOTAL_MATCHES    = 2,
+	SELECTED_INDEX   = 3,
+	SELECTED_MATCH   = 4,
+	MATCHES          = 5,
+	VIEWPORT_MATCHES = 6,
+	SELECT_SCROLL    = 7,
+}
+
+Search_Option :: enum c.int {
+	NEEDLE        = 0,
+	SELECT_NEXT   = 1,
+	SELECT_PREV   = 2,
+	SELECT_SCROLL = 3,
+}
+
+Search_Scroll :: enum c.int {
+	IF_NEEDED = 0,
+	NONE      = 1,
+}
+
+Search_Status :: enum c.int {
+	RUNNING       = 0,
+	FEED_REQUIRED = 1,
+	COMPLETE      = 2,
+}
+
+Selection_Adjust :: enum c.int {
+	LEFT              = 0,
+	RIGHT             = 1,
+	UP                = 2,
+	DOWN              = 3,
+	HOME              = 4,
+	END               = 5,
+	PAGE_UP           = 6,
+	PAGE_DOWN         = 7,
+	BEGINNING_OF_LINE = 8,
+	END_OF_LINE       = 9,
+}
+
+Selection_Gesture_Autoscroll :: enum c.int {
+	NONE = 0,
+	UP   = 1,
+	DOWN = 2,
+}
+
+Selection_Gesture_Behavior :: enum c.int {
+	CELL   = 0,
+	WORD   = 1,
+	LINE   = 2,
+	OUTPUT = 3,
+}
+
+Selection_Gesture_Data :: enum c.int {
+	CLICK_COUNT = 0,
+	DRAGGED     = 1,
+	AUTOSCROLL  = 2,
+	BEHAVIOR    = 3,
+	ANCHOR      = 4,
+}
+
+Selection_Gesture_Event_Option :: enum c.int {
+	REF                      = 0,
+	POSITION                 = 1,
+	REPEAT_DISTANCE          = 2,
+	TIME_NS                  = 3,
+	REPEAT_INTERVAL_NS       = 4,
+	WORD_BOUNDARY_CODEPOINTS = 5,
+	BEHAVIORS                = 6,
+	RECTANGLE                = 7,
+	GEOMETRY                 = 8,
+	VIEWPORT                 = 9,
+}
+
+Selection_Gesture_Event_Type :: enum c.int {
+	PRESS           = 0,
+	RELEASE         = 1,
+	DRAG            = 2,
+	AUTOSCROLL_TICK = 3,
+	DEEP_PRESS      = 4,
+}
+
+Selection_Order :: enum c.int {
+	FORWARD          = 0,
+	REVERSE          = 1,
+	MIRRORED_FORWARD = 2,
+	MIRRORED_REVERSE = 3,
+}
+
+Semantic_Prompt_Kind :: enum c.int {
+	INVALID      = 0,
+	PROMPT_START = 1,
+	INPUT_START  = 2,
+	OUTPUT_START = 3,
+	COMMAND_END  = 4,
+}
+
+Semantic_Prompt_Prompt_Kind :: enum c.int {
+	PRIMARY      = 0,
+	RIGHT        = 1,
+	CONTINUATION = 2,
+	SECONDARY    = 3,
+}
+
+Snapshot_Decoder_Data :: enum c.int {
+	INVALID                       = 0,
+	MAX_CONTINUATION_BYTES        = 1,
+	SOURCE_OFFSET                 = 2,
+	HISTORY_ROWS_PRIMARY          = 3,
+	HISTORY_ROWS_ALTERNATE        = 4,
+	PROGRESS_SCREEN               = 5,
+	PROGRESS_ROWS                 = 6,
+	PROGRESS_REMAINING            = 7,
+	RETAIN_CONTINUATION           = 8,
+	COMPRESS_HISTORY              = 9,
+	KITTY_IMAGE_STORAGE_LIMIT     = 10,
+	PROGRESS_KIND                 = 11,
+	PROGRESS_IMAGE_ID             = 12,
+	PROGRESS_IMAGE_FRAME          = 13,
+	PROGRESS_IMAGE_BYTES          = 14,
+	KITTY_IMAGES_PRIMARY          = 15,
+	KITTY_IMAGES_ALTERNATE        = 16,
+	KITTY_PENDING_BYTES_PRIMARY   = 17,
+	KITTY_PENDING_BYTES_ALTERNATE = 18,
+}
+
+Snapshot_Decoder_Option :: enum c.int {
+	MAX_CONTINUATION_BYTES    = 0,
+	RETAIN_CONTINUATION       = 1,
+	COMPRESS_HISTORY          = 2,
+	KITTY_IMAGE_STORAGE_LIMIT = 3,
+}
+
+Snapshot_Decoder_Progress_Kind :: enum c.int {
+	PAGE  = 0,
+	IMAGE = 1,
+}
+
+Terminal_Boundary :: enum c.int {
+	GROUND    = 1,
+	APC_START = 2,
+	APC_END   = 4,
+	DCS_START = 8,
+	DCS_END   = 16,
+	OSC_START = 32,
+	OSC_END   = 64,
+}
+
+Terminal_Compression_Mode :: enum c.int {
+	INCREMENTAL = 0,
+	FULL        = 1,
+}
+
+Terminal_Compression_Result :: enum c.int {
+	UNSUPPORTED = 0,
+	PENDING     = 1,
+	COMPLETE    = 2,
+}
+
+Terminal_Cursor_Style :: enum c.int {
+	BAR          = 0,
+	BLOCK        = 1,
+	UNDERLINE    = 2,
+	BLOCK_HOLLOW = 3,
+}
+
+Terminal_Progress_State :: enum c.int {
+	REMOVE        = 0,
+	SET           = 1,
+	ERROR         = 2,
+	INDETERMINATE = 3,
+	PAUSE         = 4,
+}
+
+Terminal_Resize_Window_Tag :: enum c.int {
+	GRID = 0,
+}
+
+Terminal_String_End :: enum c.int {
+	ST_ESC    = 0,
+	ST_C1     = 1,
+	CANCELLED = 2,
+	ABORTED   = 3,
+	BEL       = 4,
+}
+
+Terminal_String_Introducer :: enum c.int {
+	ESC = 0,
+	C1  = 1,
+}
+
+Terminal_String_Kind :: enum c.int {
+	APC = 0,
+	DCS = 1,
+	OSC = 2,
+}
+
+Terminal_Unknown_Sequence_Tag :: enum c.int {
+	APC = 0,
+	OSC = 1,
+}
+
+
+// ---------------------------------------------------------------------------
+// NEW: callback types
+// ---------------------------------------------------------------------------
+
+Reader_Fn :: #type proc "c" (userdata: rawptr, buffer: [^]u8, capacity: c.size_t, out_read: ^c.size_t) -> bool
+Writer_Fn :: #type proc "c" (userdata: rawptr, data: [^]u8, len: c.size_t) -> bool
+Mime_Reader_Fn :: #type proc "c" (userdata: rawptr, mime: String, writer: Writer) -> bool
+Sys_Random_Secure_Fn :: #type proc "c" (userdata: rawptr, buf: [^]u8, len: c.size_t) -> bool
+Terminal_Unknown_Sequence_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, sequence: ^Terminal_Unknown_Sequence)
+Clipboard_Write_Reply_Fn :: #type proc "c" (write: ^Clipboard_Write, reply: ^Clipboard_Write_Reply)
+Terminal_Clipboard_Write_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, write: ^Clipboard_Write)
+Clipboard_Read_Reply_Fn :: #type proc "c" (read: ^Clipboard_Read, reply: ^Clipboard_Read_Reply)
+Terminal_Clipboard_Read_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, read: ^Clipboard_Read)
+Terminal_Desktop_Notification_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, notification: ^Terminal_Desktop_Notification)
+Terminal_Progress_Report_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, report: ^Terminal_Progress_Report)
+Terminal_Program_Status_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, report: ^Terminal_Program_Status)
+Terminal_Semantic_Prompt_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, event: ^Terminal_Semantic_Prompt)
+Terminal_Reset_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr)
+Terminal_Resize_Window_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, request: ^Terminal_Resize_Window)
+Terminal_Render_Hold_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr, held: bool)
+Terminal_Pwd_Changed_Fn :: #type proc "c" (terminal: Terminal, userdata: rawptr)
+
+// ---------------------------------------------------------------------------
+// NEW: structs and unions
+// ---------------------------------------------------------------------------
+
+Buffer :: struct {
+	ptr: [^]u8,
+	cap: c.size_t,
+	len: c.size_t,
+}
+
+Cells_View :: struct {
+	ptr: [^]Cell,
+	len: c.size_t,
+}
+
+Clipboard_Content :: struct {
+	mime: String,
+	data: String,
+}
+
+Clipboard_Read :: struct {
+	size:         c.size_t,
+	location:     Clipboard_Location,
+	mimes:        [^]String,
+	mimes_len:    c.size_t,
+	list:         bool,
+	name:         String,
+	granted:      bool,
+	can_remember: bool,
+	ctx:          rawptr,
+	reply:        Clipboard_Read_Reply_Fn,
+}
+
+Clipboard_Read_Reply :: struct {
+	size:          c.size_t,
+	result:        Clipboard_Read_Result,
+	contents:      [^]Clipboard_Content,
+	contents_len:  c.size_t,
+	available:     [^]String,
+	available_len: c.size_t,
+	remember:      bool,
+}
+
+Clipboard_Write :: struct {
+	size:         c.size_t,
+	location:     Clipboard_Location,
+	contents:     [^]Clipboard_Content,
+	contents_len: c.size_t,
+	name:         String,
+	granted:      bool,
+	can_remember: bool,
+	ctx:          rawptr,
+	reply:        Clipboard_Write_Reply_Fn,
+}
+
+Clipboard_Write_Reply :: struct {
+	size:     c.size_t,
+	result:   Clipboard_Write_Result,
+	remember: bool,
+}
+
+Codepoints :: struct {
+	ptr: [^]u32,
+	len: c.size_t,
+}
+
+Color_Palette_Mask :: struct {
+	bits: [4]u64,
+}
+
+Color_X11_Entry :: struct {
+	name:  cstring,
+	color: Color_Rgb,
+}
+
+Mime_Reader :: struct {
+	read:     Mime_Reader_Fn,
+	userdata: rawptr,
+}
+
+Paste :: struct {
+	size:         c.size_t,
+	location:     Clipboard_Location,
+	source:       Paste_Source,
+	mimes:        [^]String,
+	mimes_len:    c.size_t,
+	reader:       Mime_Reader,
+	allow_unsafe: bool,
+}
+
+Reader :: struct {
+	read:     Reader_Fn,
+	userdata: rawptr,
+}
+
+Render_State_Cursor :: struct {
+	size:               c.size_t,
+	viewport_has_value: bool,
+	viewport_x:         u16,
+	viewport_y:         u16,
+	wide_tail:          bool,
+	visible:            bool,
+	blinking:           bool,
+	password_input:     bool,
+	visual_style:       Render_State_Cursor_Visual_Style,
+}
+
+Render_State_Overscan :: struct {
+	above: u16,
+	below: u16,
+}
+
+Render_State_Row_Id :: struct {
+	bits: [2]u64,
+}
+
+Render_State_Row_Selection :: struct {
+	size:    c.size_t,
+	start_x: u16,
+	end_x:   u16,
+}
+
+Selection_Buffer :: struct {
+	ptr: [^]Selection,
+	cap: c.size_t,
+	len: c.size_t,
+}
+
+Selection_Gesture_Behaviors :: struct {
+	single_click: Selection_Gesture_Behavior,
+	double_click: Selection_Gesture_Behavior,
+	triple_click: Selection_Gesture_Behavior,
+}
+
+Selection_Gesture_Geometry :: struct {
+	columns:       u32,
+	cell_width:    u32,
+	padding_left:  u32,
+	screen_height: u32,
+}
+
+Surface_Position :: struct {
+	x: f64,
+	y: f64,
+}
+
+Terminal_Desktop_Notification :: struct {
+	size:  c.size_t,
+	title: String,
+	body:  String,
+}
+
+Terminal_Memory_Usage :: struct {
+	size:                       c.size_t,
+	compression_supported:      bool,
+	primary_pages:              u64,
+	primary_virtual_bytes:      u64,
+	primary_resident_bytes:     u64,
+	primary_compressed_pages:   u64,
+	primary_compressed_bytes:   u64,
+	primary_image_bytes:        u64,
+	alternate_pages:            u64,
+	alternate_virtual_bytes:    u64,
+	alternate_resident_bytes:   u64,
+	alternate_compressed_pages: u64,
+	alternate_compressed_bytes: u64,
+	alternate_image_bytes:      u64,
+}
+
+Terminal_Mode_Config :: struct {
+	mode:  Mode,
+	value: bool,
+}
+
+Terminal_Program_Status :: struct {
+	size:     c.size_t,
+	state:    Program_Status_State,
+	kind:     Program_Status_Kind,
+	progress: i8,
+	id:       String,
+	app:      String,
+	title:    String,
+	message:  String,
+}
+
+Terminal_Progress_Report :: struct {
+	size:     c.size_t,
+	state:    Terminal_Progress_State,
+	progress: i8,
+}
+
+Terminal_Resize_Window :: struct {
+	tag:   Terminal_Resize_Window_Tag,
+	value: Terminal_Resize_Window_Value,
+}
+
+Terminal_Resize_Window_Grid :: struct {
+	rows:    u16,
+	columns: u16,
+}
+
+Terminal_Resize_Window_Value :: struct #raw_union {
+	grid:     Terminal_Resize_Window_Grid,
+	_padding: [2]u64,
+}
+
+Terminal_Semantic_Prompt :: struct {
+	size:          c.size_t,
+	kind:          Semantic_Prompt_Kind,
+	prompt_kind:   Semantic_Prompt_Prompt_Kind,
+	has_exit_code: bool,
+	exit_code:     i32,
+	command:       String,
+	error:         String,
+}
+
+Terminal_Select_Line_Options :: struct {
+	size:                     c.size_t,
+	ref:                      Grid_Ref,
+	whitespace:               [^]u32,
+	whitespace_len:           c.size_t,
+	semantic_prompt_boundary: bool,
+}
+
+Terminal_Select_Word_Between_Options :: struct {
+	size:                    c.size_t,
+	start:                   Grid_Ref,
+	end:                     Grid_Ref,
+	boundary_codepoints:     [^]u32,
+	boundary_codepoints_len: c.size_t,
+}
+
+Terminal_Select_Word_Options :: struct {
+	size:                    c.size_t,
+	ref:                     Grid_Ref,
+	boundary_codepoints:     [^]u32,
+	boundary_codepoints_len: c.size_t,
+}
+
+Terminal_Selection_Format_Options :: struct {
+	size:      c.size_t,
+	emit:      Formatter_Format,
+	unwrap:    bool,
+	trim:      bool,
+	selection: ^Selection,
+}
+
+Terminal_Unknown_Sequence :: struct {
+	tag:   Terminal_Unknown_Sequence_Tag,
+	value: Terminal_Unknown_Sequence_Value,
+}
+
+Terminal_Unknown_Osc_Sequence :: struct {
+	truncated:  bool,
+	content:    String,
+	terminator: Osc_Terminator,
+}
+
+Terminal_Unknown_String_Sequence :: struct {
+	truncated: bool,
+	content:   String,
+}
+
+Terminal_Write_Stop :: struct {
+	size:       c.size_t,
+	consumed:   c.size_t,
+	reached:    u32,
+	kind:       Terminal_String_Kind,
+	introducer: Terminal_String_Introducer,
+	end:        Terminal_String_End,
+	byte:       u8,
+}
+
+Terminal_Unknown_Sequence_Value :: struct #raw_union {
+	apc:      Terminal_Unknown_String_Sequence,
+	osc:      Terminal_Unknown_Osc_Sequence,
+	_padding: [16]u64,
+}
+
+Writer :: struct {
+	write:    Writer_Fn,
+	userdata: rawptr,
 }
 
 // ===========================================================================
@@ -1036,15 +1759,13 @@ foreign lib {
 	style_is_default :: proc(style: ^Style) -> bool ---
 
 	// -- Terminal --
-	terminal_new                 :: proc(allocator: ^Allocator, terminal: ^Terminal, options: Terminal_Options) -> Result ---
+	terminal_new                 :: proc(allocator: ^Allocator, terminal: ^Terminal, cols: u16, rows: u16) -> Result ---
 	terminal_free                :: proc(terminal: Terminal) ---
 	terminal_reset               :: proc(terminal: Terminal) ---
 	terminal_resize              :: proc(terminal: Terminal, cols: u16, rows: u16, cell_width_px: u32, cell_height_px: u32) -> Result ---
 	terminal_set                 :: proc(terminal: Terminal, option: Terminal_Option, value: rawptr) -> Result ---
 	terminal_vt_write            :: proc(terminal: Terminal, data: [^]u8, len: c.size_t) ---
 	terminal_scroll_viewport     :: proc(terminal: Terminal, behavior: Terminal_Scroll_Viewport) ---
-	terminal_mode_get            :: proc(terminal: Terminal, mode: Mode, out_value: ^bool) -> Result ---
-	terminal_mode_set            :: proc(terminal: Terminal, mode: Mode, value: bool) -> Result ---
 	terminal_get                 :: proc(terminal: Terminal, data: Terminal_Data, out: rawptr) -> Result ---
 	terminal_get_multi           :: proc(terminal: Terminal, count: c.size_t, keys: [^]Terminal_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
 	terminal_grid_ref            :: proc(terminal: Terminal, point: Point, out_ref: ^Grid_Ref) -> Result ---
@@ -1184,7 +1905,6 @@ foreign lib {
 	render_state_get             :: proc(state: Render_State, data: Render_State_Data, out: rawptr) -> Result ---
 	render_state_get_multi       :: proc(state: Render_State, count: c.size_t, keys: [^]Render_State_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
 	render_state_set             :: proc(state: Render_State, option: Render_State_Option, value: rawptr) -> Result ---
-	render_state_colors_get      :: proc(state: Render_State, out_colors: ^Render_State_Colors) -> Result ---
 
 	render_state_row_iterator_new  :: proc(allocator: ^Allocator, out_iterator: ^Render_State_Row_Iterator) -> Result ---
 	render_state_row_iterator_free :: proc(iterator: Render_State_Row_Iterator) ---
@@ -1199,4 +1919,112 @@ foreign lib {
 	render_state_row_cells_get       :: proc(cells: Render_State_Row_Cells, data: Render_State_Row_Cells_Data, out: rawptr) -> Result ---
 	render_state_row_cells_get_multi :: proc(cells: Render_State_Row_Cells, count: c.size_t, keys: [^]Render_State_Row_Cells_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
 	render_state_row_cells_free      :: proc(cells: Render_State_Row_Cells) ---
+
+	// -- Color parsing / palette / luminance --
+	color_parse               :: proc(value: [^]u8, len: c.size_t, out: ^Color_Rgb) -> Result ---
+	color_parse_x11           :: proc(name: [^]u8, len: c.size_t, out: ^Color_Rgb) -> Result ---
+	color_parse_palette_entry :: proc(value: [^]u8, len: c.size_t, out_index: ^u8, out_rgb: ^Color_Rgb) -> Result ---
+	color_palette_default     :: proc(out: ^[256]Color_Rgb) ---
+	color_palette_generate    :: proc(base: ^[256]Color_Rgb, skip: ^Color_Palette_Mask, bg: ^Color_Rgb, fg: ^Color_Rgb, harmonious: bool, out: ^[256]Color_Rgb) ---
+	color_luminance           :: proc(color: ^Color_Rgb) -> f64 ---
+	color_perceived_luminance :: proc(color: ^Color_Rgb) -> f64 ---
+	color_contrast            :: proc(a: ^Color_Rgb, b: ^Color_Rgb) -> f64 ---
+	color_x11_names           :: proc() -> [^]Color_X11_Entry --- // terminated by an entry with name == nil
+	color_x11_name_count      :: proc() -> c.size_t ---
+
+	// -- Color scheme report --
+	color_scheme_report_encode :: proc(scheme: Color_Scheme, buf: [^]u8, buf_len: c.size_t, out_written: ^c.size_t) -> Result ---
+
+	// -- Unicode width --
+	unicode_codepoint_width :: proc(cp: u32) -> u8 ---
+	unicode_grapheme_width  :: proc(cps: [^]u32, len: c.size_t, width: ^u8) -> c.size_t ---
+
+	// -- Formatter (streaming) --
+	formatter_format :: proc(formatter: Formatter, writer: Writer) -> Result ---
+
+	// -- OSC options --
+	osc_set :: proc(parser: Osc_Parser, option: Osc_Option, value: rawptr) -> Result ---
+
+	// -- Terminal: incremental write, continuation, compression, paste --
+	terminal_vt_write_until          :: proc(terminal: Terminal, data: [^]u8, len: c.size_t, boundaries: u32, out: ^Terminal_Write_Stop) -> Result ---
+	terminal_continuation_write      :: proc(terminal: Terminal, writer: Writer) -> Result ---
+	terminal_continuation_buf        :: proc(terminal: Terminal, buf: [^]u8, buf_len: c.size_t, out_written: ^c.size_t) -> Result ---
+	terminal_continuation_alloc      :: proc(terminal: Terminal, allocator: ^Allocator, out_ptr: ^[^]u8, out_len: ^c.size_t) -> Result ---
+	terminal_compression_activity    :: proc(terminal: Terminal, out_activity: ^u64) -> Result ---
+	terminal_compress                :: proc(terminal: Terminal, mode: Terminal_Compression_Mode, out_result: ^Terminal_Compression_Result) -> Result ---
+	terminal_paste                   :: proc(terminal: Terminal, paste: ^Paste, out_written: ^bool) -> Result ---
+
+	// -- Tracked grid refs (stay valid as the grid scrolls) --
+	terminal_grid_ref_track      :: proc(terminal: Terminal, point: Point, out_ref: ^Tracked_Grid_Ref) -> Result ---
+	tracked_grid_ref_free        :: proc(ref: Tracked_Grid_Ref) ---
+	tracked_grid_ref_has_value   :: proc(ref: Tracked_Grid_Ref) -> bool ---
+	tracked_grid_ref_point       :: proc(ref: Tracked_Grid_Ref, tag: Point_Tag, out_point: ^Point_Coordinate) -> Result ---
+	tracked_grid_ref_set         :: proc(ref: Tracked_Grid_Ref, terminal: Terminal, point: Point) -> Result ---
+	tracked_grid_ref_snapshot    :: proc(ref: Tracked_Grid_Ref, out_ref: ^Grid_Ref) -> Result ---
+
+	// -- Kitty graphics animation --
+	kitty_graphics_animation_tick :: proc(graphics: Kitty_Graphics, now_ms: u64, next_ms: ^u64) -> Result ---
+
+	// -- Render state: explicit update bracketing, dirty rows, images --
+	render_state_begin_update :: proc(state: Render_State, terminal: Terminal) -> Result ---
+	render_state_end_update   :: proc(state: Render_State) -> Result ---
+	render_state_clean        :: proc(state: Render_State) -> Result ---
+
+	render_state_row_iterator_next_dirty :: proc(iterator: Render_State_Row_Iterator, out_y: ^u16) -> bool ---
+
+	render_state_image_iterator_new   :: proc(allocator: ^Allocator, out_iterator: ^Render_State_Image_Iterator) -> Result ---
+	render_state_image_iterator_free  :: proc(iterator: Render_State_Image_Iterator) ---
+	render_state_image_iterator_next  :: proc(iterator: Render_State_Image_Iterator) -> bool ---
+	render_state_image_get            :: proc(iterator: Render_State_Image_Iterator, data: Render_State_Image_Data, out: rawptr) -> Result ---
+	render_state_image_get_multi      :: proc(iterator: Render_State_Image_Iterator, count: c.size_t, keys: [^]Render_State_Image_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+
+	// -- Search --
+	search_new       :: proc(allocator: ^Allocator, out_search: ^Search, terminal: Terminal) -> Result ---
+	search_free      :: proc(search: Search) ---
+	search_tick      :: proc(search: Search, out_status: ^Search_Status) -> Result ---
+	search_feed      :: proc(search: Search) -> Result ---
+	search_run       :: proc(search: Search) -> Result ---
+	search_set       :: proc(search: Search, option: Search_Option, value: rawptr) -> Result ---
+	search_get       :: proc(search: Search, data: Search_Data, value: rawptr) -> Result ---
+	search_get_multi :: proc(search: Search, count: c.size_t, keys: [^]Search_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+
+	// -- Selection: gestures --
+	selection_gesture_event_new  :: proc(allocator: ^Allocator, out_event: ^Selection_Gesture_Event, type: Selection_Gesture_Event_Type) -> Result ---
+	selection_gesture_event_free :: proc(event: Selection_Gesture_Event) ---
+	selection_gesture_event_set  :: proc(event: Selection_Gesture_Event, option: Selection_Gesture_Event_Option, value: rawptr) -> Result ---
+	selection_gesture_event      :: proc(gesture: Selection_Gesture, terminal: Terminal, event: Selection_Gesture_Event, out_selection: ^Selection) -> Result ---
+	selection_gesture_new        :: proc(allocator: ^Allocator, out_gesture: ^Selection_Gesture) -> Result ---
+	selection_gesture_free       :: proc(gesture: Selection_Gesture, terminal: Terminal) ---
+	selection_gesture_reset      :: proc(gesture: Selection_Gesture, terminal: Terminal) ---
+	selection_gesture_get        :: proc(gesture: Selection_Gesture, terminal: Terminal, data: Selection_Gesture_Data, value: rawptr) -> Result ---
+	selection_gesture_get_multi  :: proc(gesture: Selection_Gesture, terminal: Terminal, count: c.size_t, keys: [^]Selection_Gesture_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
+
+	// -- Selection: queries and text extraction --
+	terminal_select_word          :: proc(terminal: Terminal, options: ^Terminal_Select_Word_Options, out_selection: ^Selection) -> Result ---
+	terminal_select_word_between  :: proc(terminal: Terminal, options: ^Terminal_Select_Word_Between_Options, out_selection: ^Selection) -> Result ---
+	terminal_select_line          :: proc(terminal: Terminal, options: ^Terminal_Select_Line_Options, out_selection: ^Selection) -> Result ---
+	terminal_select_all           :: proc(terminal: Terminal, out_selection: ^Selection) -> Result ---
+	terminal_select_output        :: proc(terminal: Terminal, ref: Grid_Ref, out_selection: ^Selection) -> Result ---
+	terminal_selection_format_buf   :: proc(terminal: Terminal, options: Terminal_Selection_Format_Options, buf: [^]u8, buf_len: c.size_t, out_written: ^c.size_t) -> Result ---
+	terminal_selection_format_alloc :: proc(terminal: Terminal, allocator: ^Allocator, options: Terminal_Selection_Format_Options, out_ptr: ^[^]u8, out_len: ^c.size_t) -> Result ---
+	terminal_selection_adjust     :: proc(terminal: Terminal, selection: ^Selection, adjustment: Selection_Adjust) -> Result ---
+	terminal_selection_order      :: proc(terminal: Terminal, selection: ^Selection, out_order: ^Selection_Order) -> Result ---
+	terminal_selection_ordered    :: proc(terminal: Terminal, selection: ^Selection, desired: Selection_Order, out_selection: ^Selection) -> Result ---
+	terminal_selection_contains   :: proc(terminal: Terminal, selection: ^Selection, point: Point, out_contains: ^bool) -> Result ---
+	terminal_selection_equal      :: proc(terminal: Terminal, a: ^Selection, b: ^Selection, out_equal: ^bool) -> Result ---
+
+	// -- Snapshots (serialize / restore a terminal) --
+	snapshot_encode        :: proc(terminal: Terminal, writer: Writer) -> Result ---
+	snapshot_encode_buf    :: proc(terminal: Terminal, buf: [^]u8, buf_len: c.size_t, out_written: ^c.size_t) -> Result ---
+	snapshot_encode_alloc  :: proc(terminal: Terminal, allocator: ^Allocator, out_ptr: ^[^]u8, out_len: ^c.size_t) -> Result ---
+
+	snapshot_decoder_new       :: proc(allocator: ^Allocator, decoder: ^Snapshot_Decoder, reader: Reader) -> Result ---
+	snapshot_decoder_new_buf   :: proc(allocator: ^Allocator, decoder: ^Snapshot_Decoder, ptr: [^]u8, len: c.size_t) -> Result ---
+	snapshot_decoder_free      :: proc(decoder: Snapshot_Decoder) ---
+	snapshot_decoder_set       :: proc(decoder: Snapshot_Decoder, option: Snapshot_Decoder_Option, value: rawptr) -> Result ---
+	snapshot_decoder_ready     :: proc(decoder: Snapshot_Decoder, terminal: ^Terminal) -> Result ---
+	snapshot_decoder_next      :: proc(decoder: Snapshot_Decoder) -> Result ---
+	snapshot_decoder_decode    :: proc(decoder: Snapshot_Decoder, terminal: ^Terminal) -> Result ---
+	snapshot_decoder_get       :: proc(decoder: Snapshot_Decoder, data: Snapshot_Decoder_Data, out: rawptr) -> Result ---
+	snapshot_decoder_get_multi :: proc(decoder: Snapshot_Decoder, count: c.size_t, keys: [^]Snapshot_Decoder_Data, values: [^]rawptr, out_written: ^c.size_t) -> Result ---
 }

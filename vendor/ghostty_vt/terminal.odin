@@ -17,15 +17,21 @@ Error :: enum {
 	Invalid_Value,
 	Out_Of_Space,
 	No_Value,
+	Io_Error,
+	Limit_Exceeded,
+	Rejected,
 }
 
 to_error :: proc(r: Result) -> Error {
 	switch r {
-	case .SUCCESS:       return .None
-	case .OUT_OF_MEMORY: return .Out_Of_Memory
-	case .INVALID_VALUE: return .Invalid_Value
-	case .OUT_OF_SPACE:  return .Out_Of_Space
-	case .NO_VALUE:      return .No_Value
+	case .SUCCESS:        return .None
+	case .OUT_OF_MEMORY:  return .Out_Of_Memory
+	case .INVALID_VALUE:  return .Invalid_Value
+	case .OUT_OF_SPACE:   return .Out_Of_Space
+	case .NO_VALUE:       return .No_Value
+	case .IO_ERROR:       return .Io_Error
+	case .LIMIT_EXCEEDED: return .Limit_Exceeded
+	case .REJECTED:       return .Rejected
 	}
 	return .Invalid_Value
 }
@@ -120,13 +126,15 @@ _make_term_allocator :: proc(odin_alloc: mem.Allocator) -> ^Term_Allocator {
 term_init :: proc(cols: u16, rows: u16, max_scrollback: uint = 10000, allocator := context.allocator) -> (Term, Error) {
 	t: Term
 	t._alloc = _make_term_allocator(allocator)
-	opts := Terminal_Options{
-		cols           = cols,
-		rows           = rows,
-		max_scrollback = c.size_t(max_scrollback),
-	}
-	res := terminal_new(&t._alloc.handle, &t.handle, opts)
+	res := terminal_new(&t._alloc.handle, &t.handle, cols, rows)
 	if res != .SUCCESS {
+		mem.free(t._alloc, allocator)
+		return {}, to_error(res)
+	}
+	// Scrollback is an option now rather than a constructor argument.
+	lines := c.size_t(max_scrollback)
+	if res = terminal_set(t.handle, .SCROLLBACK_MAX_LINES, &lines); res != .SUCCESS {
+		terminal_free(t.handle)
 		mem.free(t._alloc, allocator)
 		return {}, to_error(res)
 	}
@@ -170,7 +178,9 @@ term_resize :: proc(t: ^Term, cols: u16, rows: u16, cell_w_px: u32 = 0, cell_h_p
 	return to_error(terminal_resize(t.handle, cols, rows, cell_w_px, cell_h_px))
 }
 
-// Set a callback / option on the terminal.
+// Set a callback / option on the terminal. For callback options (WRITE_PTY,
+// BELL, ...) and USERDATA, `value` is the proc / pointer itself, e.g.
+// `rawptr(my_proc)`; for everything else it points at the value.
 term_set :: proc(t: ^Term, option: Terminal_Option, value: rawptr) -> Error {
 	return to_error(terminal_set(t.handle, option, value))
 }
@@ -226,6 +236,9 @@ term_cursor_visible :: proc(t: ^Term) -> bool {
 	return v
 }
 
+// The returned string points into libghostty-vt memory: it is valid only until
+// the next call that modifies the terminal (`term_write`, `term_reset`, ...).
+// Clone it if you need to keep it.
 term_title :: proc(t: ^Term) -> string {
 	s: String
 	if terminal_get(t.handle, .TITLE, &s) != .SUCCESS do return ""
@@ -233,6 +246,7 @@ term_title :: proc(t: ^Term) -> string {
 	return string(s.ptr[:s.len])
 }
 
+// Borrowed like `term_title`.
 term_pwd :: proc(t: ^Term) -> string {
 	s: String
 	if terminal_get(t.handle, .PWD, &s) != .SUCCESS do return ""
@@ -269,13 +283,22 @@ term_total_rows :: proc(t: ^Term) -> uint {
 // ---------------------------------------------------------------------------
 
 term_mode_get :: proc(t: ^Term, mode: Mode) -> bool {
-	v: bool
-	terminal_mode_get(t.handle, mode, &v)
-	return v
+	cfg := Terminal_Mode_Config{mode = mode}
+	terminal_get(t.handle, .MODE, &cfg)
+	return cfg.value
 }
 
+// Sets the current value only; a reset (RIS / DECSTR) still restores the
+// default. Use `term_mode_set_default` to change what a reset restores.
 term_mode_set :: proc(t: ^Term, mode: Mode, value: bool) -> Error {
-	return to_error(terminal_mode_set(t.handle, mode, value))
+	cfg := Terminal_Mode_Config{mode = mode, value = value}
+	return to_error(terminal_set(t.handle, .MODE, &cfg))
+}
+
+// Sets both the current value and the value a reset restores.
+term_mode_set_default :: proc(t: ^Term, mode: Mode, value: bool) -> Error {
+	cfg := Terminal_Mode_Config{mode = mode, value = value}
+	return to_error(terminal_set(t.handle, .MODE_DEFAULT, &cfg))
 }
 
 // ---------------------------------------------------------------------------
@@ -391,7 +414,7 @@ term_render_update :: proc(t: ^Term) -> Error {
 term_render_colors :: proc(t: ^Term) -> (Render_State_Colors, Error) {
 	if err := term_ensure_render(t); err != .None do return {}, err
 	colors := Render_State_Colors{size = size_of(Render_State_Colors)}
-	res := render_state_colors_get(t._render, &colors)
+	res := render_state_get(t._render, .COLORS, &colors)
 	return colors, to_error(res)
 }
 
@@ -425,18 +448,11 @@ term_render_state    :: #force_inline proc "contextless" (t: ^Term) -> Render_St
 term_row_iterator    :: #force_inline proc "contextless" (t: ^Term) -> Render_State_Row_Iterator     { return t._row_iter }
 term_row_cells_handle :: #force_inline proc "contextless" (t: ^Term) -> Render_State_Row_Cells       { return t._row_cells }
 
-// Reset render dirty state.
+// Mark the global and every per-row dirty flag as consumed. Call after a
+// complete frame has been drawn.
 term_render_clean :: proc(t: ^Term) {
 	if !t._has_render do return
-
-	dirty_false := Render_State_Dirty.FALSE
-	render_state_set(t._render, .DIRTY, &dirty_false)
-
-	render_state_get(t._render, .ROW_ITERATOR, &t._row_iter)
-	for render_state_row_iterator_next(t._row_iter) {
-		dirty_val := false
-		render_state_row_set(t._row_iter, .DIRTY, &dirty_val)
-	}
+	render_state_clean(t._render)
 }
 
 // ---------------------------------------------------------------------------

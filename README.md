@@ -1,9 +1,9 @@
 # ghosdin
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Odin](https://img.shields.io/badge/odin-dev--2026--05-orange.svg)](https://odin-lang.org/)
-[![Zig](https://img.shields.io/badge/zig-0.15.2-f7a41d.svg)](https://ziglang.org/)
-[![raylib](https://img.shields.io/badge/raylib-5.5-white.svg)](https://www.raylib.com/)
+[![Odin](https://img.shields.io/badge/odin-dev--2026--10-orange.svg)](https://odin-lang.org/)
+[![Zig](https://img.shields.io/badge/zig-0.17.0-f7a41d.svg)](https://ziglang.org/)
+[![raylib](https://img.shields.io/badge/raylib-6.0-white.svg)](https://www.raylib.com/)
 [![Platform](https://img.shields.io/badge/platform-linux-lightgrey.svg)](#)
 
 Odin bindings for [libghostty-vt](https://github.com/ghostty-org/ghostty) — the
@@ -34,9 +34,10 @@ ghosdin/
 
 ### Prerequisites
 
-- [Odin](https://odin-lang.org/) `dev-2026-05` or newer (the `dev-2026-05` API set is what the bindings target)
-- [Zig](https://ziglang.org/) 0.15.2 — to build libghostty-vt
-  (pinned in `.mise.toml`; upstream ghostty does not yet support 0.16)
+- [Odin](https://odin-lang.org/) `dev-2026-10` or newer (pinned in `.mise.toml`). raylib 6.0
+  comes with Odin's `vendor:raylib`, so there is nothing separate to install.
+- [Zig](https://ziglang.org/) 0.17.0 — to build libghostty-vt
+  (pinned in `.mise.toml`; ghostty's `build.zig.zon` sets `minimum_zig_version = "0.17.0"`)
 - [just](https://github.com/casey/just) — task runner
 
 ### Setup
@@ -66,17 +67,25 @@ just test-lib         Run libghostty-vt's test suite
 
 ### vendor/ghostty_vt — Bindings
 
-Complete Odin mapping of the libghostty-vt C API, plus an idiomatic wrapper.
+Odin mapping of the whole public libghostty-vt C API (everything under
+`include/ghostty/vt/` except `wasm.h`), plus an idiomatic wrapper for the
+common paths. Every struct layout, enum value and function signature was
+checked against the library built from ghostty `46e9dc9` (2026-10-27); the
+library reports its own layouts through `ghostty_type_json`, which is what to
+diff against when bumping ghostty.
 
 #### Raw bindings (`ghostty_vt.odin`)
 
 ```odin
+import "core:c"
 import gvt "vendor/ghostty_vt"
 
 term: gvt.Terminal
-opts := gvt.Terminal_Options{cols = 80, rows = 24, max_scrollback = 1000}
-gvt.terminal_new(nil, &term, opts)
+gvt.terminal_new(nil, &term, 80, 24)
 defer gvt.terminal_free(term)
+
+scrollback: c.size_t = 1000
+gvt.terminal_set(term, .SCROLLBACK_MAX_LINES, &scrollback)
 
 data := "\x1b[1;32mHello!\x1b[0m\r\n"
 gvt.terminal_vt_write(term, raw_data(data), len(data))
@@ -120,7 +129,13 @@ for row in gvt.render_row_next(&row_it) {
 | Formatter       | Export content as plain text, VT, or HTML          |
 | Modes           | ANSI and DEC terminal mode utilities               |
 | Focus/Paste     | Focus encoding, paste safety + bracketed encoding  |
-| Selection       | Grid-ref selection ranges                          |
+| Selection       | Ranges, word/line/output selection, mouse gestures, text extraction |
+| Search          | Incremental scrollback search                      |
+| Snapshot        | Serialize a terminal and restore it (encoder/decoder) |
+| Tracked Refs    | Grid references that follow content as it scrolls  |
+| Color           | Parse color strings, X11 names, palette generation, contrast |
+| Unicode         | Codepoint and grapheme cell width                  |
+| Clipboard/Paste | Clipboard read/write callbacks, paste encoding     |
 | Kitty Graphics  | Image storage, placement iteration, render geometry|
 | Sys             | Runtime callbacks (PNG decode, log)                |
 | Allocator       | Custom memory allocator support                    |

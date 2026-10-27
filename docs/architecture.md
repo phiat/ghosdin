@@ -40,6 +40,12 @@ function interface. The binding covers the complete API surface:
 | Key Encoder     | Encode keyboard events to VT escape sequences      |
 | Mouse Encoder   | Encode mouse events to VT escape sequences         |
 | Formatter       | Export terminal content as plain text, VT, or HTML |
+| Selection       | Selection ranges, gestures, word/line/output select, text extraction |
+| Search          | Incremental scrollback search                      |
+| Snapshot        | Serialize a terminal and restore it                |
+| Tracked Refs    | Grid references that follow content as it scrolls  |
+| Color / Unicode | Color parsing, palettes, contrast; cell widths     |
+| Clipboard/Paste | Clipboard read/write callbacks, paste encoding     |
 | Modes           | Pack/unpack ANSI and DEC terminal mode identifiers |
 | Focus/Paste     | Focus event encoding, paste safety validation      |
 | Allocator       | Custom memory allocator interface                  |
@@ -239,9 +245,9 @@ compiles the Odin code, links against it, and runs the result.
 
 | Dependency     | Version   | Source          | Purpose              |
 |----------------|-----------|-----------------|----------------------|
-| Odin           | nightly   | mise            | Language / compiler  |
-| Zig            | 0.15.2    | mise            | Build libghostty-vt  |
+| Odin           | dev-2026-10 | mise          | Language / compiler  |
+| Zig            | 0.17.0    | mise            | Build libghostty-vt  |
 | libghostty-vt  | HEAD      | git (ghostty/)  | VT terminal engine   |
-| raylib         | 5.5       | Odin vendor     | Windowing + rendering|
+| raylib         | 6.0       | Odin vendor     | Windowing + rendering|
 | libutil        | system    | glibc           | forkpty(3)           |
 | just           | any       | mise            | Task runner          |

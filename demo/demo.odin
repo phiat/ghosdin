@@ -23,13 +23,14 @@ main :: proc() {
 	// 1. Create a terminal (80×24, 1000 lines of scrollback)
 	// ---------------------------------------------------------------
 	term: gvt.Terminal
-	opts := gvt.Terminal_Options{cols = 80, rows = 24, max_scrollback = 1000}
-	res := gvt.terminal_new(nil, &term, opts)
+	res := gvt.terminal_new(nil, &term, 80, 24)
 	if res != .SUCCESS {
 		fmt.printfln("terminal_new failed: %v", res)
 		return
 	}
 	defer gvt.terminal_free(term)
+	scrollback_lines: c.size_t = 1000
+	gvt.terminal_set(term, .SCROLLBACK_MAX_LINES, &scrollback_lines)
 	fmt.println("[+] Terminal created (80x24)")
 
 	// ---------------------------------------------------------------
@@ -39,10 +40,8 @@ main :: proc() {
 		// In a real app you'd write this back to the PTY.
 		// Here we just note that a response was generated.
 	}
-	// Store at package level to avoid dangling stack pointer
-	@(static) write_fn: gvt.Terminal_Write_Pty_Fn
-	write_fn = gvt.Terminal_Write_Pty_Fn(write_pty_cb)
-	gvt.terminal_set(term, .WRITE_PTY, rawptr(&write_fn))
+	// Callbacks are passed as the proc pointer itself, not a pointer to it.
+	gvt.terminal_set(term, .WRITE_PTY, rawptr(write_pty_cb))
 
 	// ---------------------------------------------------------------
 	// 3. Feed some VT data
@@ -121,9 +120,9 @@ main :: proc() {
 	// ---------------------------------------------------------------
 	// 6. Check a terminal mode
 	// ---------------------------------------------------------------
-	wrap_enabled: bool
-	if gvt.terminal_mode_get(term, gvt.MODE_WRAPAROUND, &wrap_enabled) == .SUCCESS {
-		fmt.printfln("  Wraparound mode: %v", wrap_enabled)
+	wrap := gvt.Terminal_Mode_Config{mode = gvt.MODE_WRAPAROUND}
+	if gvt.terminal_get(term, .MODE, &wrap) == .SUCCESS {
+		fmt.printfln("  Wraparound mode: %v", wrap.value)
 	}
 
 	// ---------------------------------------------------------------
